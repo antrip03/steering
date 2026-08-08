@@ -1,0 +1,23 @@
+{
+  "_comment": "Per-concept token lists needed to drive search_features/filter_features_by_effect_and_activations. PISCES's own repo never publishes these for any concept except (implicitly) Harry Potter, whose pos_toks are hardcoded in erasing_harry_potter.ipynb's signs-computation cell. search_tokens seeds search_features' vocabulary-projection match; pos_toks feeds get_mlp_act_signs and the pos-token side of filter_features_by_effect_and_activations; neg_toks (near-domain contrastive tokens whose probability should NOT drop) is not present anywhere in pisces_ref and must be curated per concept before that concept can run -- left null on purpose rather than guessed, especially for the sensitive concepts (Suicide, Mass Shooting, Rape, Opioid).",
+
+  "Harry Potter": {
+    "search_tokens": [" Harry", " Potter", " Hermione", " Weasley", " Hogwarts", " Snape", " Malfoy", " Voldemort"],
+    "pos_toks": [" Harry", " Potter", " Hermione", " Weasley", " Hogwarts", " Snape", " Malfoy", " Voldemort"],
+    "neg_toks": null
+  },
+  "Culture of Greece": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Golf": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Republic of Ireland": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Ancient Rome": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Baseball": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Uranium": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Suicide": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Mass Shooting": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Rape": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Opioid": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Cannabis": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Gambling": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Gun": {"search_tokens": null, "pos_toks": null, "neg_toks": null},
+  "Pornography": {"search_tokens": null, "pos_toks": null, "neg_toks": null}
+}

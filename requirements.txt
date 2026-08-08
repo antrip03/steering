@@ -1,0 +1,22 @@
+# Core deps mirrored from pisces_ref (PISCES has no requirements.txt/pyproject.toml of
+# its own -- this list was built by grepping its imports in editor.py / evals.py /
+# feature_finder.py). Install with:
+#   pip install --break-system-packages -r requirements.txt
+
+torch
+transformer_lens
+sae_lens
+transformers
+peft
+datasets
+dataclasses-json
+pandas
+numpy
+tqdm
+openai
+google-generativeai
+
+# Added for this project (not required by PISCES itself)
+pyarrow      # parquet I/O for artifacts/
+scipy        # Spearman correlation, Track D
+matplotlib   # plots, Track D

@@ -1,0 +1,17 @@
+# Generated data -- see artifacts/README or top-level README for what lives here
+artifacts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
