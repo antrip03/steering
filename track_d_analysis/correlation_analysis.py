@@ -39,6 +39,13 @@ def build_combined_results() -> pd.DataFrame:
         )
     eval_df = pd.read_parquet(EVAL_RESULTS_PATH)
 
+    # Track B is the sole source of truth for the entanglement_* columns -- Track C's
+    # ConceptResultRow rows always carry them as the schema default (None), via
+    # dataclasses.asdict(). Selecting only Track C's own columns here avoids a
+    # pd.merge name collision that would otherwise silently suffix both copies
+    # (_x/_y) and leave the real entanglement_* values unreachable after reindex.
+    eval_df = eval_df[["concept", "efficacy", "specificity_simdomain", "specificity_mmlu"]]
+
     combined = pd.merge(eval_df, entanglement_df, on="concept", how="outer")
     return combined.reindex(columns=CONCEPT_RESULT_FIELDS)
 

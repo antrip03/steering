@@ -2,21 +2,39 @@
 # its own -- this list was built by grepping its imports in editor.py / evals.py /
 # feature_finder.py). Install with:
 #   pip install --break-system-packages -r requirements.txt
+#
+# PINNED VERSIONS -- REQUIRES PYTHON 3.12, NOT 3.13.
+# numpy/pyarrow/transformers/datasets/huggingface_hub/transformer_lens/sae_lens/peft below
+# are pinned to the versions current as of pisces_ref's own last commit (2025-05-30) and
+# the Python version its demo notebook's kernel metadata records (3.12.5) -- verified via
+# each package's actual published dependency metadata (PyPI), not guessed. This resolves a
+# confirmed NumPy 1.x/2.x ABI mismatch: unpinned installs previously pulled numpy 2.x +
+# a transformers/datasets combination built against a different numpy ABI, which caused
+# nondeterministic native segfaults on import (see REPO_DIAGNOSTIC.md for the full repro).
+#
+# STRUCTURAL CONSTRAINT, NOT JUST A PIP DETAIL: no numpy 1.x release -- including 1.26.4
+# below -- ever shipped a Python 3.13 wheel (numpy's first cp313 wheel is 2.1.0), and
+# pyarrow 15.0.2 tops out at cp312 too. This pin set is only installable via prebuilt
+# wheels under Python 3.12. Whatever environment/container runs this project needs to be
+# on Python 3.12, not 3.13, for these pins to resolve without building numpy/pyarrow from
+# source on Windows.
 
 torch
-transformer_lens
-sae_lens
-transformers
-peft
-datasets
-dataclasses-json
+transformer_lens==2.15.4
+sae_lens==5.10.5
+transformers==4.52.4
+peft==0.15.2
+datasets==2.21.0
+dataclasses-json==0.6.7
 pandas
-numpy
+numpy==1.26.4
 tqdm
 openai
 google-generativeai
+huggingface_hub==0.32.3
 
 # Added for this project (not required by PISCES itself)
-pyarrow      # parquet I/O for artifacts/
+pyarrow==15.0.2      # parquet I/O for artifacts/
 scipy        # Spearman correlation, Track D
 matplotlib   # plots, Track D
+pytest       # unit tests (e.g. track_a_feature_discovery/test_*.py)

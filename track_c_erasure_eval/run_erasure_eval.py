@@ -66,7 +66,7 @@ def load_selected_features(concept: str) -> list[Feature]:
     if not path.exists():
         raise FileNotFoundError(
             f"No Track A output for {concept!r} at {path}. "
-            "Run track_a_feature_discovery/run_discovery.py first, or use "
+            "Run track_a_feature_discovery/discover.py first, or use "
             "--hardcoded-hp for the Harry Potter validation path."
         )
     df = pd.read_parquet(path)
@@ -134,9 +134,11 @@ def main():
     parser.add_argument("--mmlu-limit", type=int, default=300)
     args = parser.parse_args()
 
-    from transformer_lens import HookedTransformer
+    from sae_lens import HookedSAETransformer
 
-    model = HookedTransformer.from_pretrained(MODEL_NAME, device=args.device)
+    # must be HookedSAETransformer: feature_finder.py's get_feature_effect calls
+    # run_with_cache_with_saes, which only exists on this subclass, not plain HookedTransformer.
+    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device)
 
     rows = []
     if args.hardcoded_hp:

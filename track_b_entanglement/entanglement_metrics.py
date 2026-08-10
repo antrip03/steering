@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from schema import NATURAL_CONCEPTS  # noqa: E402
+from schema import ConceptResultRow, NATURAL_CONCEPTS  # noqa: E402
 
 FEATURES_DIR = ROOT / "artifacts" / "features"
 
@@ -52,7 +52,7 @@ def _load(concept: str) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
             f"No Track A output for {concept!r} at {path}. "
-            "Run track_a_feature_discovery/run_discovery.py first."
+            "Run track_a_feature_discovery/discover.py first."
         )
     return pd.read_parquet(path)
 
@@ -125,14 +125,18 @@ def compute_all(concepts: list[str] | None = None) -> pd.DataFrame:
         cosine_scores = [cosine_entanglement(concept, other) for other in others]
         cosine_mean = float(np.nanmean(cosine_scores)) if cosine_scores else float("nan")
 
-        rows.append(
-            {
-                "concept": concept,
-                "entanglement_cosine": cosine_mean,
-                "entanglement_pullin_rate": pullin_rate(concept),
-                "entanglement_token_overlap": token_overlap(concept),
-            }
-        )
+        # ConceptResultRow.to_dict() includes every schema field (asdict()), so
+        # efficacy/specificity_* would come through as None here too -- keep only
+        # the entanglement_* columns this track owns, or Track D's merge would hit
+        # the exact same _x/_y collision this construction is meant to guard
+        # against, just on the other three columns.
+        row = ConceptResultRow(
+            concept=concept,
+            entanglement_cosine=cosine_mean,
+            entanglement_pullin_rate=pullin_rate(concept),
+            entanglement_token_overlap=token_overlap(concept),
+        ).to_dict()
+        rows.append({k: row[k] for k in ("concept", "entanglement_cosine", "entanglement_pullin_rate", "entanglement_token_overlap")})
 
     return pd.DataFrame(rows)
 
