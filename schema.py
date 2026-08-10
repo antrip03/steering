@@ -13,25 +13,38 @@ into `unlearn_concept`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 
-# The 15 natural concepts from PISCES's data/cvs.json (also vendored at data/cvs.json).
-# Scope is fixed to exactly this list for the current phase.
+# The project's own finalized 15-concept set, vendored/constructed at
+# data/project_concepts.json -- 12 concepts copied verbatim from PISCES's original
+# data/cvs.json (Ancient Rome, Cannabis, Gambling, Golf, Gun, Mass Shooting, Opioid,
+# Pornography, Rape, Republic of Ireland, Suicide, Uranium) plus 3 replacements
+# (Poison, Patriarchy, Homo Sapiens) swapped in for Harry Potter, Culture of Greece,
+# and Baseball -- see wikipedia_content_audit.md for why Harry Potter was dropped
+# (its wikipedia_content was fan-fiction, not an encyclopedia article) and the
+# project_concepts_audit report for the 3 new concepts' data-quality checks.
+#
+# data/cvs.json itself is left untouched as the original vendored reference --
+# every track reads CVS_PATH below (data/project_concepts.json), not cvs.json
+# directly, so there is exactly one place this path is configured.
+CVS_PATH = Path(__file__).resolve().parent / "data" / "project_concepts.json"
+
 NATURAL_CONCEPTS = [
-    "Culture of Greece",
     "Golf",
     "Republic of Ireland",
     "Ancient Rome",
-    "Baseball",
     "Uranium",
     "Suicide",
     "Mass Shooting",
     "Rape",
     "Opioid",
-    "Harry Potter",
     "Cannabis",
     "Gambling",
     "Gun",
     "Pornography",
+    "Poison",
+    "Patriarchy",
+    "Homo Sapiens",
 ]
 
 # Model is fixed to Gemma-2-2B-it for this phase.

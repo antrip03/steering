@@ -124,6 +124,38 @@ itself.
 
 ---
 
+## Applied — `GeminiEvaluator` dead-model default fix
+
+### 7. [RESOLVED] `pisces_ref/evals.py`'s `GeminiEvaluator` defaulted to a model with zero quota on this project's API key
+
+**Found while troubleshooting Gemini quota errors during the concept-set-swap QA generation task** (unrelated
+original purpose, but the same API key/account, so directly relevant): `GeminiEvaluator.__init__`
+(`pisces_ref/evals.py:505`, pre-fix) defaulted to `model_name="models/gemini-2.0-flash"`.
+
+**Confirmed dead, not just rate-limited** — a direct `gai.GenerativeModel("models/gemini-2.0-flash").generate_content(...)`
+call (isolated from `evals.py`'s heavier, occasionally-flaky `transformers`/`datasets` import chain, to get a
+clean signal) returns:
+```
+429 ResourceExhausted: Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests,
+limit: 0, model: gemini-2.0-flash
+```
+`limit: 0` — this model has no quota allocation on this key at all, not a temporary cap. This is a live blocker
+for **any** real Track C evaluation run: both call sites that construct a `GeminiEvaluator`
+(`pisces_ref/feature_finder.py:243` inside `find_hps`, and `track_c_erasure_eval/run_erasure_eval.py:104`) do so
+with no explicit `model_name`, so both would hit this the moment `evaluate_open_ended`/`_send_request` is
+actually called — the same category of "confirmed-dead default in vendored code, blocks real runs" as the
+earlier `gcg_multiple`/`os` fixes.
+
+**Fix applied:** changed the default to `model_name="models/gemini-flash-latest"`, confirmed working with a live
+call (`generate_content('Say OK')` → `"OK"`) using the same API key. Both construction sites pick this up
+automatically since neither passes an explicit override.
+
+**Not otherwise verified against a real Track C run** (`evaluate_open_ended`'s actual grading behavior,
+response parsing, etc.) — only that the model itself accepts and responds to requests. That's a separate,
+larger verification still gated on the standing HF/model-access boundary.
+
+---
+
 ## Fix pass results
 
 ### 0. [RESOLVED — was a disputed finding] `unlearn_concept` call sites inside `pisces_ref/feature_finder.py` used stale kwargs

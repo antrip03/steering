@@ -156,9 +156,10 @@ def derive_seed_tokens_for_concept(
     top_n: int = DEFAULT_TOP_N,
 ) -> list[str]:
     """Convenience wrapper for the common case: builds the background corpus
-    from every *other* concept's `wikipedia_content` in `cvs` (PISCES's
-    `data/cvs.json` rows, one dict per concept with a `"Concept"` and
-    `"wikipedia_content"` key) and calls `extract_seed_tokens` for `concept`.
+    from every *other* concept's `wikipedia_content` in `cvs` (rows loaded from
+    `schema.CVS_PATH`, one dict per concept with a `"Concept"` and
+    `"wikipedia_content"` key, matching PISCES's original `cvs.json` row shape)
+    and calls `extract_seed_tokens` for `concept`.
     """
     concept_row = next((row for row in cvs if row["Concept"] == concept), None)
     if concept_row is None:

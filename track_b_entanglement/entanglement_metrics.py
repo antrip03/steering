@@ -23,17 +23,21 @@ from schema import ConceptResultRow, NATURAL_CONCEPTS  # noqa: E402
 FEATURES_DIR = ROOT / "artifacts" / "features"
 
 # Each concept's designated near-domain concept, for metric (c). PISCES itself
-# only provides per-concept "similar domain" QA text (cvs.json's SimdomQA_*
-# fields), not a named sibling concept among the 15 -- this pairing is a
-# curated placeholder for the current phase and should get a domain-expert
-# pass before being treated as ground truth. Harry Potter in particular has no
-# good sibling among real-world topics; flagged as weak below.
+# only provides per-concept "similar domain" QA text (project_concepts.json's
+# SimdomQA_* fields), not a named sibling concept among the 15 -- this pairing
+# is a curated placeholder for the current phase and should get a
+# domain-expert pass before being treated as ground truth.
+#
+# Updated for the Poison/Patriarchy/Homo Sapiens concept swap (Harry Potter,
+# Culture of Greece, and Baseball removed -- see wikipedia_content_audit.md).
+# Removing those three orphaned the pairings that pointed at them (Republic of
+# Ireland and Ancient Rome both pointed at Culture of Greece; Golf pointed at
+# Baseball); those three, plus the 3 new concepts, are the only entries that
+# changed below -- every pairing among the 12 unchanged concepts is untouched.
 NEAR_DOMAIN_PAIRS = {
-    "Culture of Greece": "Ancient Rome",
-    "Ancient Rome": "Culture of Greece",
-    "Golf": "Baseball",
-    "Baseball": "Golf",
-    "Republic of Ireland": "Culture of Greece",
+    "Ancient Rome": "Homo Sapiens",  # was "Culture of Greece" (removed); both broad human-history/civilization topics
+    "Republic of Ireland": "Ancient Rome",  # was "Culture of Greece" (removed); nation-with-deep-historical-continuity, same weak-ish quality as the original
+    "Golf": "Gambling",  # was "Baseball" (removed); sports-betting is a real adjacent domain, extends the existing Gambling/Pornography "vice industries" cluster below
     "Uranium": "Gun",
     "Suicide": "Opioid",
     "Mass Shooting": "Gun",
@@ -43,7 +47,9 @@ NEAR_DOMAIN_PAIRS = {
     "Gambling": "Pornography",
     "Gun": "Mass Shooting",
     "Pornography": "Gambling",
-    "Harry Potter": "Culture of Greece",  # WEAK: only mythology/fantasy overlap; revisit
+    "Poison": "Opioid",  # new concept: opioid overdose is literally a poisoning mechanism -- close topical overlap
+    "Patriarchy": "Rape",  # new concept: gender-based power structures and gender-based violence are closely studied together in the literature
+    "Homo Sapiens": "Ancient Rome",  # new concept: mutual with Ancient Rome above -- both broad human-history/civilization topics
 }
 
 

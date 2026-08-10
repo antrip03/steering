@@ -45,7 +45,7 @@ for p in (ROOT, PISCES_REF, Path(__file__).resolve().parent):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from schema import FeatureRecord, MODEL_NAME, NATURAL_CONCEPTS  # noqa: E402
+from schema import CVS_PATH, FeatureRecord, MODEL_NAME, NATURAL_CONCEPTS  # noqa: E402
 from editor import get_mlp_act_signs  # noqa: E402
 from feature_finder import (  # noqa: E402
     filter_features_by_effect_and_activations,
@@ -56,7 +56,6 @@ from seed_tokens import derive_seed_tokens_for_concept, get_neg_toks  # noqa: E4
 from vocab_projection import build_all_layer_lookups  # noqa: E402
 
 ARTIFACTS_DIR = ROOT / "artifacts" / "features"
-CVS_PATH = ROOT / "data" / "cvs.json"
 
 
 def load_cvs() -> list[dict]:
@@ -150,7 +149,11 @@ def main():
 
     # must be HookedSAETransformer: feature_finder.py's get_feature_effect calls
     # run_with_cache_with_saes, which only exists on this subclass, not plain HookedTransformer.
-    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device)
+    # dtype=bfloat16 (default is float32) to roughly halve the model's memory footprint on
+    # memory-constrained hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
+    # (pisces_ref/editor.py's SAEConfig.get()) has no dtype override, SAEs load at whatever
+    # precision their pretrained checkpoint ships (float32 for GemmaScope releases).
+    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=torch.bfloat16)
 
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 

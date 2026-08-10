@@ -25,7 +25,7 @@ for p in (ROOT, PISCES_REF):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from schema import ConceptResultRow, MODEL_NAME, NATURAL_CONCEPTS  # noqa: E402
+from schema import CVS_PATH, ConceptResultRow, MODEL_NAME, NATURAL_CONCEPTS  # noqa: E402
 from editor import Concept, Feature, get_mlp_act_signs, unlearn_concept  # noqa: E402
 from evals import (  # noqa: E402
     GeminiEvaluator,
@@ -36,7 +36,6 @@ from evals import (  # noqa: E402
     evaluate_open_ended,
 )
 
-CVS_PATH = ROOT / "data" / "cvs.json"
 FEATURES_DIR = ROOT / "artifacts" / "features"
 TOKENS_PATH = ROOT / "track_a_feature_discovery" / "concept_tokens.json"
 
@@ -138,7 +137,11 @@ def main():
 
     # must be HookedSAETransformer: feature_finder.py's get_feature_effect calls
     # run_with_cache_with_saes, which only exists on this subclass, not plain HookedTransformer.
-    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device)
+    # dtype=bfloat16 (default is float32) to roughly halve the model's memory footprint on
+    # memory-constrained hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
+    # (pisces_ref/editor.py's SAEConfig.get()) has no dtype override, SAEs load at whatever
+    # precision their pretrained checkpoint ships (float32 for GemmaScope releases).
+    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=torch.bfloat16)
 
     rows = []
     if args.hardcoded_hp:
