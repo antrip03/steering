@@ -30,14 +30,34 @@ resolves the confirmed NumPy 1.x/2.x ABI mismatch behind the earlier nondetermin
 unpinned — not implicated in the crash, and the installed version already satisfies `transformer_lens 2.15.4`'s
 `torch>=2.2` floor.
 
-**Not yet installed or tested.** `requirements.txt` now declares this pin set, but `pip install` has not been run
-against it, and the ABI fix has not been empirically re-confirmed (the original segfault repro has not been
-re-run against these pins). **This pin set structurally requires Python 3.12** — no `numpy` 1.x release, including
-`1.26.4`, ever shipped a Python 3.13 wheel (confirmed against PyPI: the first `numpy` release with a `cp313`
-wheel is `2.1.0`), and `pyarrow 15.0.2` tops out at `cp312` too. This sandbox runs Python 3.13. Installing this
-pin set here as-is would force building `numpy`/`pyarrow` from source, which is a separate, real risk on Windows
-and was not attempted. Actual installation and verification is explicitly gated on the team confirming the
-target runtime will be Python 3.12.
+**Now installed and empirically verified, under a real Python 3.12 environment.** A fresh Python 3.12.10
+interpreter (installed via `winget`, alongside the existing 3.13 install, not replacing it) and venv were
+created outside the repo, and `pip install -r requirements.txt` was run for real.
+
+- **First two attempts failed on an unrelated Windows path-length issue**, not a dependency problem: pip fully
+  resolved all ~150 transitive packages with zero conflicts both times, but installation itself failed with
+  `OSError: [Errno 2] No such file or directory` on one of `torch`'s deeply-nested internal header files, because
+  the venv's own path (deep inside a long temp directory) plus torch's path pushed past Windows' 260-character
+  `MAX_PATH` limit. Fixed by recreating the venv at a short path (`C:\pv312`) rather than enabling Windows Long
+  Path support system-wide (a machine-level registry change, out of scope to make unilaterally).
+- **Third attempt succeeded cleanly**: exit code 0, ~17 minutes (1033s), zero `ERROR`/conflict/incompatibility
+  lines anywhere in the log. `pip freeze` confirms every one of the 9 pinned packages installed at *exactly* the
+  pinned version (`numpy==1.26.4`, `pyarrow==15.0.2`, `datasets==2.21.0`, `transformers==4.52.4`,
+  `huggingface-hub==0.32.3`, `transformer-lens==2.15.4`, `sae-lens==5.10.5`, `peft==0.15.2`,
+  `dataclasses-json==0.6.7`); `torch==2.13.0` installed unpinned, satisfying the `>=2.2` floor.
+- **The ABI fix itself is now confirmed, not just plausible:** the same `from transformers import
+  PreTrainedModel; import datasets` reproduction that previously produced three different outcomes (instant
+  segfault, a 2h39m hang, a 63s success) under the old unpinned environment was re-run **5 times as 5 independent
+  processes** under this new environment. **All 5 succeeded**, exit code 0 every time, 12-33 seconds each — no
+  crashes, no hangs, consistent timing. This is meaningfully different from the old environment's pattern, not
+  just one more data point in the same noise.
+- **Full 18-test suite re-run under this interpreter: 18/18 passed**, 29.36s, one unrelated harmless deprecation
+  warning (`google.generativeai` package sunset notice).
+
+**Left in place for reuse:** the Python 3.12.10 interpreter (`C:\Users\anshu\AppData\Local\Programs\Python\Python312`)
+and the verified venv (`C:\pv312`) were not deleted after verification — rebuilding took ~30 minutes cumulative
+across the three install attempts, and both are needed for any future real run once HF/model access is
+configured. Fully reversible/removable if not wanted.
 
 ---
 
