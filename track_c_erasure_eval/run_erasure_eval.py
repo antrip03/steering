@@ -16,8 +16,8 @@ import json
 import sys
 from pathlib import Path
 
-import pandas as pd
 import torch
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 PISCES_REF = ROOT / "pisces_ref"
@@ -138,25 +138,39 @@ def main():
     # must be HookedSAETransformer: feature_finder.py's get_feature_effect calls
     # run_with_cache_with_saes, which only exists on this subclass, not plain HookedTransformer.
     # dtype=bfloat16 (default is float32) to roughly halve the model's memory footprint on
-    # memory-constrained hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
+    # memory-constrained GPU hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
     # (pisces_ref/editor.py's SAEConfig.get()) has no dtype override, SAEs load at whatever
-    # precision their pretrained checkpoint ships (float32 for GemmaScope releases).
-    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=torch.bfloat16)
+    # precision their pretrained checkpoint ships (float32 for GemmaScope releases). editor.py's
+    # get_hswaps_full_signed does raw matmuls between model.blocks[i].mlp.W_out and sae.W_enc/
+    # sae.decode(...), which requires matching dtypes -- bf16 vs the SAE's fp32 raises
+    # "addmv input tensors must have the same dtype". On CPU there's no VRAM pressure motivating
+    # bf16 in the first place (and CPU bf16 kernels aren't reliably faster than fp32), so use
+    # fp32 there to sidestep this whole class of mismatch instead of patching every mixed-dtype
+    # call site in pisces_ref.
+    model_dtype = torch.bfloat16 if args.device == "cuda" else torch.float32
+    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=model_dtype)
+    # See discover.py's identical comment: nothing in this pipeline trains/backprops, but
+    # none of pisces_ref's forward-pass call sites wrap model(...) in torch.no_grad(), so
+    # every forward pass retains a full backward-computation graph unless we force it off
+    # here -- observed in practice as free RAM collapsing from ~22GB to ~300MB within a
+    # few hundred passes during the Track A discovery run.
+    model.requires_grad_(False)
 
     rows = []
-    if args.hardcoded_hp:
-        pos_toks = load_pos_toks("Harry Potter")
-        rows.append(evaluate_concept(model, "Harry Potter", HARDCODED_HP_FEATURES, pos_toks, mmlu_limit=args.mmlu_limit))
-    else:
-        concepts = args.concepts or NATURAL_CONCEPTS
-        for concept in concepts:
-            try:
-                features = load_selected_features(concept)
-                pos_toks = load_pos_toks(concept)
-            except (FileNotFoundError, ValueError) as e:
-                print(f"[{concept}] SKIPPED: {e}")
-                continue
-            rows.append(evaluate_concept(model, concept, features, pos_toks, mmlu_limit=args.mmlu_limit))
+    with torch.no_grad():
+        if args.hardcoded_hp:
+            pos_toks = load_pos_toks("Harry Potter")
+            rows.append(evaluate_concept(model, "Harry Potter", HARDCODED_HP_FEATURES, pos_toks, mmlu_limit=args.mmlu_limit))
+        else:
+            concepts = args.concepts or NATURAL_CONCEPTS
+            for concept in concepts:
+                try:
+                    features = load_selected_features(concept)
+                    pos_toks = load_pos_toks(concept)
+                except (FileNotFoundError, ValueError) as e:
+                    print(f"[{concept}] SKIPPED: {e}")
+                    continue
+                rows.append(evaluate_concept(model, concept, features, pos_toks, mmlu_limit=args.mmlu_limit))
 
     out_dir = ROOT / "artifacts"
     out_dir.mkdir(parents=True, exist_ok=True)

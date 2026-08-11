@@ -36,8 +36,8 @@ import json
 import sys
 from pathlib import Path
 
-import pandas as pd
 import torch
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 PISCES_REF = ROOT / "pisces_ref"
@@ -70,7 +70,7 @@ def get_concept_data(cvs: list[dict], concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
-def discover_concept(model, cvs: list[dict], concept: str, layers=None) -> pd.DataFrame:
+def discover_concept(model, cvs: list[dict], concept: str, layers=None, device: str = "cuda") -> pd.DataFrame:
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -86,19 +86,27 @@ def discover_concept(model, cvs: list[dict], concept: str, layers=None) -> pd.Da
     neg_toks = get_neg_toks(is_single_token)
 
     saes_by_layer: dict[int, object] = {}
-    lls = build_all_layer_lookups(model, MODEL_NAME, layers=layers, saes_out=saes_by_layer)
+    lls = build_all_layer_lookups(model, MODEL_NAME, layers=layers, device=device, saes_out=saes_by_layer)
 
-    candidates = search_features(model, lls, seed_tokens, minmatch=1)
+    candidates = search_features(model, lls, seed_tokens, minmatch=1, layers=layers)
     print(f"[{concept}] seed_tokens={seed_tokens} neg_toks={neg_toks}")
     print(f"[{concept}] {len(candidates)} candidate features from vocab-projection search")
 
     forget_text = concept_data["wikipedia_content"]
     signs = get_mlp_act_signs(model, seed_tokens, forget_text.splitlines()[:1000])
 
+    concept_slug = concept.lower().replace(" ", "_")
+    checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
     effect_filtered, (pos_effects, neg_effects, activations) = filter_features_by_effect_and_activations(
-        model, candidates, forget_text, signs, seed_tokens, neg_toks, filter_by_act=True
+        model, candidates, forget_text, signs, seed_tokens, neg_toks, filter_by_act=True,
+        checkpoint_dir=str(checkpoint_dir),
     )
-    selected = filter_features_by_mmlu(model, effect_filtered, signs)
+    selected = filter_features_by_mmlu(
+        model, effect_filtered, signs,
+        checkpoint_path=str(checkpoint_dir / "mmlu.ckpt"),
+    )
     selected_keys = {(f.layer, f.id, f.neg) for f in selected}
     print(f"[{concept}] {len(selected)} features survived filtering (selected=True)")
 
@@ -150,23 +158,41 @@ def main():
     # must be HookedSAETransformer: feature_finder.py's get_feature_effect calls
     # run_with_cache_with_saes, which only exists on this subclass, not plain HookedTransformer.
     # dtype=bfloat16 (default is float32) to roughly halve the model's memory footprint on
-    # memory-constrained hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
+    # memory-constrained GPU hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
     # (pisces_ref/editor.py's SAEConfig.get()) has no dtype override, SAEs load at whatever
-    # precision their pretrained checkpoint ships (float32 for GemmaScope releases).
-    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=torch.bfloat16)
+    # precision their pretrained checkpoint ships (float32 for GemmaScope releases). editor.py's
+    # get_hswaps_full_signed does raw matmuls between model.blocks[i].mlp.W_out and sae.W_enc/
+    # sae.decode(...), which requires matching dtypes -- bf16 vs the SAE's fp32 raises
+    # "addmv input tensors must have the same dtype". On CPU there's no VRAM pressure motivating
+    # bf16 in the first place (and CPU bf16 kernels aren't reliably faster than fp32), so use
+    # fp32 there to sidestep this whole class of mismatch instead of patching every mixed-dtype
+    # call site in pisces_ref.
+    model_dtype = torch.bfloat16 if args.device == "cuda" else torch.float32
+    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=model_dtype)
+    # Nothing in this pipeline trains/backprops -- it's pure inference. None of
+    # pisces_ref's forward-pass call sites (get_feature_effect, get_feature_activations,
+    # get_mlp_act_signs, evaluate_mmlu) wrap their model(...) calls in torch.no_grad(),
+    # so every one of the thousands of forward passes in a real discovery run builds and
+    # retains a full backward-computation graph for a 2B-param model -- observed in
+    # practice as free RAM collapsing from ~22GB to ~300MB within a few hundred passes.
+    # requires_grad_(False) covers the base model's parameters; the outer no_grad() below
+    # additionally covers the SAE parameters (loaded separately, not covered by the line
+    # above) and anything else in the call tree, so nothing anywhere builds a graph.
+    model.requires_grad_(False)
 
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    for concept in concepts:
-        try:
-            df = discover_concept(model, cvs, concept, layers=args.layers)
-        except ValueError as e:
-            print(f"[{concept}] SKIPPED: {e}")
-            continue
+    with torch.no_grad():
+        for concept in concepts:
+            try:
+                df = discover_concept(model, cvs, concept, layers=args.layers, device=args.device)
+            except ValueError as e:
+                print(f"[{concept}] SKIPPED: {e}")
+                continue
 
-        out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}.parquet"
-        df.to_parquet(out_path, index=False)
-        print(f"[{concept}] wrote {len(df)} candidate features to {out_path}")
+            out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}.parquet"
+            df.to_parquet(out_path, index=False)
+            print(f"[{concept}] wrote {len(df)} candidate features to {out_path}")
 
 
 if __name__ == "__main__":
