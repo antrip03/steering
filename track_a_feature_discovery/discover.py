@@ -157,18 +157,36 @@ def main():
 
     # must be HookedSAETransformer: feature_finder.py's get_feature_effect calls
     # run_with_cache_with_saes, which only exists on this subclass, not plain HookedTransformer.
-    # dtype=bfloat16 (default is float32) to roughly halve the model's memory footprint on
-    # memory-constrained GPU hosts -- note this does NOT affect SAE memory: SAE.from_pretrained
-    # (pisces_ref/editor.py's SAEConfig.get()) has no dtype override, SAEs load at whatever
-    # precision their pretrained checkpoint ships (float32 for GemmaScope releases). editor.py's
-    # get_hswaps_full_signed does raw matmuls between model.blocks[i].mlp.W_out and sae.W_enc/
-    # sae.decode(...), which requires matching dtypes -- bf16 vs the SAE's fp32 raises
-    # "addmv input tensors must have the same dtype". On CPU there's no VRAM pressure motivating
-    # bf16 in the first place (and CPU bf16 kernels aren't reliably faster than fp32), so use
-    # fp32 there to sidestep this whole class of mismatch instead of patching every mixed-dtype
-    # call site in pisces_ref.
-    model_dtype = torch.bfloat16 if args.device == "cuda" else torch.float32
-    model = HookedSAETransformer.from_pretrained(MODEL_NAME, device=args.device, dtype=model_dtype)
+    # dtype=bfloat16 (default is float32) to roughly halve the model's memory footprint --
+    # note this does NOT affect SAE memory: SAE.from_pretrained (pisces_ref/editor.py's
+    # SAEConfig.get()) has no dtype override, SAEs load at whatever precision their pretrained
+    # checkpoint ships (float32 for GemmaScope releases). editor.py's get_hswaps_full_signed/
+    # get_hswaps_full used to do raw matmuls directly between model.blocks[i].mlp.W_out and
+    # sae.W_enc/sae.decode(...), which requires matching dtypes -- bf16 vs the SAE's fp32 raised
+    # "addmv input tensors must have the same dtype". Fixed at the source (both functions now
+    # bridge W_out to a temporary fp32 copy for the SAE-facing ops, cast back to the model's
+    # native dtype before the weight swap), so bf16 is now safe on any device, not just CUDA.
+    # bf16 also meaningfully helps CPU-only runs: it roughly halves both the model's static
+    # footprint and the transient peak memory of each forward pass, directly relevant on
+    # memory-constrained hosts -- CPU bf16 *speed* isn't guaranteed to improve (no dedicated
+    # bf16 kernels on most consumer CPUs), only memory headroom.
+    model_dtype = torch.bfloat16
+    # from_pretrained_no_processing (vs. plain from_pretrained) skips several weight-
+    # folding/centering passes (fold_ln, center_writing_weights, center_unembed,
+    # refactor_factored_attn_matrices, fold_value_biases) -- each of these operates on
+    # full-model-sized weight tensors and plausibly creates full intermediate copies
+    # during conversion, which is the likely cause of a large transient memory spike
+    # observed during model loading (free RAM briefly collapsing to ~1GB before the
+    # model even finishes loading, independent of the eventual bf16/fp32 dtype choice).
+    # transformer_lens itself warns "with reduced precision, it is advised to use
+    # from_pretrained_no_processing instead" when dtype != float32. Safe for this
+    # project: nothing here touches attention weights (W_Q/W_K/W_V) or relies on
+    # LayerNorm folding/centering -- only model.W_U (vocab_projection.py) and
+    # model.blocks[i].mlp.W_out (editor.py) are used, and Gemma already skips
+    # center_unembed/center_writing_weights internally regardless (RMSNorm, not
+    # LayerNorm, plus logit softcap makes center_unembed inapplicable -- see the
+    # warnings transformer_lens already prints for this model).
+    model = HookedSAETransformer.from_pretrained_no_processing(MODEL_NAME, device=args.device, dtype=model_dtype)
     # Nothing in this pipeline trains/backprops -- it's pure inference. None of
     # pisces_ref's forward-pass call sites (get_feature_effect, get_feature_activations,
     # get_mlp_act_signs, evaluate_mmlu) wrap their model(...) calls in torch.no_grad(),
