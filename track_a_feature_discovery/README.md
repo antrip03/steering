@@ -172,6 +172,58 @@ Only once that matches (or the discrepancy is understood), and only after the
 two open design decisions above have had a team review pass, should the
 other 14 concepts be run.
 
+## Runtime reductions (`--reduced` / `reductions.py`, `kaggle` branch)
+
+`discover.py --reduced` applies four config-level speed-ups on top of the
+unmodified `pisces_ref` selection logic (nothing here changes what "selected"
+*means*, only how much work goes into measuring it). All constants live in
+`reductions.py`, shared with `run_kaggle.py`. Full rationale and per-item
+source verification is in that module's docstring; summary:
+
+1. **Effect-measurement corpus**: `get_feature_effect` originally runs over
+   every line of a concept's `wikipedia_content` (~85 batches for Golf).
+   `--reduced` uses `evenly_spaced_subsample_lines()` to take 20
+   representative batches spread across the whole article, not just its
+   opening.
+2. **VocabProj threshold**: default `minmatch=1` is far looser than PISCES's
+   own paper (Appendix A.1: "intersection size greater than a threshold alpha
+   (we used alpha = 4)", verified against the actual PDF text — note the
+   strict `>` means `minmatch=5`, not `4`, reproduces it exactly).
+   `--reduced` also runs a cheap `CASCADE_PREFILTER_BATCHES`-batch pre-pass
+   (`cascade_filter_candidates`) that drops the bottom `1 -
+   CASCADE_KEEP_FRACTION` of candidates by a pos/neg-effect heuristic score
+   before the full (already-reduced) measurement — this one is a **heuristic**,
+   not provably exact, unlike the early-exit below. Also enables
+   `early_exit_after_batches` (`pisces_ref/feature_finder.py::get_feature_effect`,
+   `steering-fixes` fork branch): a provably-safe short-circuit that stops
+   evaluating a candidate once its remaining batches mathematically cannot
+   change the keep/drop decision, given softmax-diff values are bounded in
+   `[-1, 1]`.
+3. **Layer scope**: `MIDDLE_LAYERS = range(3, 13)`, per the task's EMBER
+   Figure 7 citation — **not independently verified** here (unlike the
+   alpha=4 claim above; the EMBER paper wasn't available locally to check
+   against). Used only as the `--reduced` default for `--layers`; pass
+   `--layers` explicitly to override.
+4. **Concept scope**: `REDUCED_CONCEPTS` (6 of 15), preserving the five-
+   category entanglement design — general/specific pair (Poison, Uranium),
+   max-entanglement stress test (Homo Sapiens), clean low-entanglement
+   control that's also a PISCES paper concept (Golf), intersectional pair
+   (Gun, Mass Shooting). Used only as the `--reduced` default for
+   `--concept`; pass `--concept` explicitly to override.
+
+**Validation status (Step 2.5)**: the task's required check — run Golf once
+at original settings and once at `--reduced`, diff the selected FC, report
+exact matches/differences — needs a real Gemma-2-2B-it forward-pass run and
+has **not been executed**. This machine has no CUDA GPU (AMD Radeon 680M
+iGPU) and 14.3GB RAM, and a prior session already observed near-OOM loading
+the model alone in fp32; a full-corpus, all-26-layer, `minmatch=1` "original
+settings" run is the most expensive possible configuration in this whole
+project and was not attempted here. Treat every reduction above as
+**unvalidated** against the real model until this run is done — this
+directory's non-`--reduced` default remains PISCES's original, unrestricted
+behavior specifically so that comparison stays possible once a suitable
+machine is available.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub

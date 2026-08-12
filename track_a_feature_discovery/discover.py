@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 import torch
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,10 +51,22 @@ from editor import get_mlp_act_signs  # noqa: E402
 from feature_finder import (  # noqa: E402
     filter_features_by_effect_and_activations,
     filter_features_by_mmlu,
+    get_feature_effect,
     search_features,
 )
 from seed_tokens import derive_seed_tokens_for_concept, get_neg_toks  # noqa: E402
 from vocab_projection import build_all_layer_lookups  # noqa: E402
+from reductions import (  # noqa: E402
+    CASCADE_KEEP_FRACTION,
+    CASCADE_PREFILTER_BATCHES,
+    EARLY_EXIT_AFTER_BATCHES,
+    EARLY_EXIT_MARGIN,
+    EFFECT_MEASUREMENT_BATCHES,
+    MIDDLE_LAYERS,
+    REDUCED_CONCEPTS,
+    VOCABPROJ_MINMATCH,
+    evenly_spaced_subsample_lines,
+)
 
 ARTIFACTS_DIR = ROOT / "artifacts" / "features"
 
@@ -70,7 +83,52 @@ def get_concept_data(cvs: list[dict], concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
-def discover_concept(model, cvs: list[dict], concept: str, layers=None, device: str = "cuda") -> pd.DataFrame:
+def cascade_filter_candidates(model, candidates, forget_text, signs, seed_tokens, neg_toks, cascade_batches, keep_fraction, batch_size=3):
+    """Cheap pre-pass on a small (evenly-spaced) subset of batches, used to
+    drop the weakest half of candidates before the full (reduced) measurement
+    runs on the survivors. Uses the same underlying get_feature_effect
+    PISCES's own filter_features_by_effect_and_activations calls internally,
+    just on fewer batches and without the final threshold decision.
+
+    Unlike early-exit (see pisces_ref/feature_finder.py::get_feature_effect),
+    this is a HEURISTIC speed-up, not a provably-exact one -- a candidate
+    that's weak on the cascade subset but happens to be strong specifically
+    on the batches the cascade subset skipped could be dropped here even
+    though the unreduced run would have kept it. Step 2.5 validates this
+    empirically; if it changes the selected FC, don't silently keep it."""
+    lines = forget_text.splitlines()
+    cascade_lines = evenly_spaced_subsample_lines(lines, cascade_batches)
+
+    pos_tok_ids = [model.to_single_token(tok) for tok in seed_tokens]
+    neg_tok_ids = [model.to_single_token(tok) for tok in neg_toks]
+
+    pos_effects, neg_effects = get_feature_effect(model, candidates, signs, cascade_lines, pos_tok_ids, neg_tok_ids, batch_size=batch_size)
+
+    def score(feature):
+        key = (feature.layer, feature.id)
+        pos_effect = float(np.mean(pos_effects[key])) if pos_effects[key] else 0.0
+        neg_effect = float(np.mean(neg_effects[key])) if neg_effects[key] else 0.0
+        # both selection criteria (pos_effect > 0, neg_effect < -2) put on the
+        # same "higher is more likely to survive" 0-centered scale
+        return max(pos_effect, -neg_effect / 2)
+
+    ranked = sorted(candidates, key=score, reverse=True)
+    keep_n = max(1, int(len(ranked) * keep_fraction))
+    survivors = ranked[:keep_n]
+    print(f"  cascade prefilter: {len(candidates)} -> {len(survivors)} candidates ({cascade_batches} batches, keep_fraction={keep_fraction})")
+    return survivors
+
+
+def discover_concept(
+    model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
+    reduced: bool = False,
+) -> pd.DataFrame:
+    """reduced=True applies every Step 2 runtime reduction together (see
+    reductions.py for each one's rationale): tightened VocabProj minmatch,
+    cascade prefiltering, a reduced+evenly-spaced effect-measurement corpus,
+    and early-exit. reduced=False (default) preserves the exact original,
+    unrestricted behavior -- this flag exists specifically so the same
+    function can be called both ways for Step 2.5's validation diff."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -88,8 +146,9 @@ def discover_concept(model, cvs: list[dict], concept: str, layers=None, device: 
     saes_by_layer: dict[int, object] = {}
     lls = build_all_layer_lookups(model, MODEL_NAME, layers=layers, device=device, saes_out=saes_by_layer)
 
-    candidates = search_features(model, lls, seed_tokens, minmatch=1, layers=layers)
-    print(f"[{concept}] seed_tokens={seed_tokens} neg_toks={neg_toks}")
+    minmatch = VOCABPROJ_MINMATCH if reduced else 1
+    candidates = search_features(model, lls, seed_tokens, minmatch=minmatch, layers=layers)
+    print(f"[{concept}] seed_tokens={seed_tokens} neg_toks={neg_toks} minmatch={minmatch}")
     print(f"[{concept}] {len(candidates)} candidate features from vocab-projection search")
 
     forget_text = concept_data["wikipedia_content"]
@@ -99,9 +158,24 @@ def discover_concept(model, cvs: list[dict], concept: str, layers=None, device: 
     checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    effect_candidates = candidates
+    effect_text = forget_text
+    early_exit_after_batches = None
+    if reduced:
+        effect_candidates = cascade_filter_candidates(
+            model, candidates, forget_text, signs, seed_tokens, neg_toks,
+            CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION,
+        )
+        effect_lines = evenly_spaced_subsample_lines(forget_text.splitlines(), EFFECT_MEASUREMENT_BATCHES)
+        effect_text = "\n".join(effect_lines)
+        early_exit_after_batches = EARLY_EXIT_AFTER_BATCHES
+        print(f"  effect measurement: {len(forget_text.splitlines())} -> {len(effect_lines)} lines "
+              f"({EFFECT_MEASUREMENT_BATCHES} evenly-spaced batches), early_exit_after_batches={early_exit_after_batches}")
+
     effect_filtered, (pos_effects, neg_effects, activations) = filter_features_by_effect_and_activations(
-        model, candidates, forget_text, signs, seed_tokens, neg_toks, filter_by_act=True,
+        model, effect_candidates, effect_text, signs, seed_tokens, neg_toks, filter_by_act=True,
         checkpoint_dir=str(checkpoint_dir),
+        early_exit_after_batches=early_exit_after_batches, early_exit_margin=EARLY_EXIT_MARGIN,
     )
     selected = filter_features_by_mmlu(
         model, effect_filtered, signs,
@@ -148,9 +222,26 @@ def main():
     )
     parser.add_argument("--layers", type=int, nargs="*", default=None, help="Restrict to specific layers (faster iteration).")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--reduced",
+        action="store_true",
+        help=(
+            "Apply the Step 2 runtime reductions (see reductions.py): tightened "
+            "VocabProj minmatch, cascade prefiltering, reduced+evenly-spaced "
+            "effect-measurement corpus, early-exit. Also changes the --concept "
+            "and --layers defaults (not overrides -- pass either explicitly to "
+            "override) to REDUCED_CONCEPTS / MIDDLE_LAYERS. Omit for the exact "
+            "original, unrestricted behavior."
+        ),
+    )
     args = parser.parse_args()
 
-    concepts = args.concepts or NATURAL_CONCEPTS
+    if args.reduced:
+        concepts = args.concepts or REDUCED_CONCEPTS
+        layers = args.layers if args.layers is not None else MIDDLE_LAYERS
+    else:
+        concepts = args.concepts or NATURAL_CONCEPTS
+        layers = args.layers
     cvs = load_cvs()
 
     from sae_lens import HookedSAETransformer
@@ -203,7 +294,7 @@ def main():
     with torch.no_grad():
         for concept in concepts:
             try:
-                df = discover_concept(model, cvs, concept, layers=args.layers, device=args.device)
+                df = discover_concept(model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced)
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
                 continue
