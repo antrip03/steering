@@ -224,6 +224,39 @@ directory's non-`--reduced` default remains PISCES's original, unrestricted
 behavior specifically so that comparison stays possible once a suitable
 machine is available.
 
+### `build_layer_lookup` OOM fix (chunked vocabulary projection)
+
+`vocab_projection.py::build_layer_lookup` used to project an SAE's *entire*
+feature set through `model.W_U` in one matmul: `sae.W_dec.float() @
+model.W_U.float()` materializes a dense `[n_features, d_vocab]` fp32 tensor
+— for a 16k-width SAE against Gemma-2-2B-it's ~256k vocab, that's `16384 ×
+256000 × 4 bytes ≈ 15.6 GiB`, which OOMs on a 16GB T4 (and contributed
+memory pressure on any smaller machine) despite only the top/bottom-`k` per
+feature ever being used downstream. Fixed by processing features in chunks
+of `FEATURE_CHUNK_SIZE` (default 2000, ≈1.9GiB peak per chunk), extracting
+each chunk's top/bottom-k immediately and discarding the chunk's full
+projection before the next one — `chunk_size` is a parameter on both
+`build_layer_lookup` and `build_all_layer_lookups`, not a hardcoded value.
+
+**Verified**: `test_vocab_projection.py::test_chunked_matches_unchunked_on_random_features`
+confirms chunked output is byte-identical to unchunked (random, non-tied
+weights; a non-divisible feature count against several chunk sizes,
+including a size that forces a partial last chunk) — this is a pure
+reshaping-of-computation change, not an approximation, so exact equality is
+the correct bar, not "close enough." `test_chunking_never_materializes_more_than_one_chunk_at_once`
+directly checks the memory-bound property by spying on every `topk` call's
+input shape.
+
+**Not verified**: an actual `[16384, 256000]` OOM on real GPU hardware, and
+real peak-memory numbers before/after the fix, since this machine has no
+CUDA device. The synthetic tests above prove the fix is *correct*; they
+don't independently prove the *original* bug actually manifested as
+described (an external report referenced this fix alongside a claimed
+correlation to an earlier, separately-observed CPU crash — that report
+wasn't available to verify against, so treat the crash-correlation claim as
+unconfirmed; the OOM arithmetic itself, independent of that report, is
+directly verifiable by reading the code and was confirmed that way).
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub

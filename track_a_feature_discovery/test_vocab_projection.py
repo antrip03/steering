@@ -94,3 +94,60 @@ def test_build_layer_lookup_top_k_larger_than_vocab_is_clamped():
 
     assert len(lookup.t[0]) == 3
     assert len(lookup.b[0]) == 3
+
+
+def test_chunked_matches_unchunked_on_random_features():
+    # Regression test for the unchunked-matmul OOM (an unchunked
+    # [n_features, d_vocab] fp32 projection is ~15.6GiB for a real 16k-width
+    # SAE against Gemma's ~256k vocab -- see FEATURE_CHUNK_SIZE's comment).
+    # Uses a deliberately non-divisible feature count (23) against a small
+    # chunk_size (5) so the last chunk is partial, and random (not
+    # hand-constructed) weights so there's no artificial tie structure
+    # masking a chunk-boundary bug. chunk_size=23 (>= n_features, single
+    # chunk == the old unchunked path) is the reference; smaller chunk sizes
+    # must match it exactly, row for row.
+    torch.manual_seed(0)
+    n_features, d_model, d_vocab = 23, 6, 40
+    w_dec = torch.randn(n_features, d_model)
+    w_u = torch.randn(d_model, d_vocab)
+    sae = FakeSAE(w_dec)
+    model = FakeModel(w_u)
+
+    reference = build_layer_lookup(model, sae, top_k=7, chunk_size=n_features)
+    for chunk_size in (1, 5, 6, 100):
+        chunked = build_layer_lookup(model, sae, top_k=7, chunk_size=chunk_size)
+        assert chunked.t == reference.t, f"top tokens differ at chunk_size={chunk_size}"
+        assert chunked.b == reference.b, f"bottom tokens differ at chunk_size={chunk_size}"
+
+
+def test_chunking_never_materializes_more_than_one_chunk_at_once():
+    # Directly exercises the memory-bound property the fix is for: peak
+    # per-chunk projection size is chunk_size * d_vocab, not
+    # n_features * d_vocab. Patches torch.Tensor.topk to record the shape of
+    # every tensor it's called on, so this fails if a future edit
+    # accidentally reintroduces a full-size intermediate.
+    n_features, d_model, d_vocab, chunk_size = 50, 4, 1000, 7
+    w_dec = torch.randn(n_features, d_model)
+    w_u = torch.randn(d_model, d_vocab)
+    sae = FakeSAE(w_dec)
+    model = FakeModel(w_u)
+
+    seen_shapes = []
+    real_topk = torch.Tensor.topk
+
+    def spying_topk(self, *args, **kwargs):
+        seen_shapes.append(tuple(self.shape))
+        return real_topk(self, *args, **kwargs)
+
+    torch.Tensor.topk = spying_topk
+    try:
+        build_layer_lookup(model, sae, top_k=3, chunk_size=chunk_size)
+    finally:
+        torch.Tensor.topk = real_topk
+
+    assert seen_shapes, "topk was never called"
+    max_rows_seen = max(shape[0] for shape in seen_shapes)
+    assert max_rows_seen <= chunk_size, (
+        f"a tensor with {max_rows_seen} rows was passed to topk, "
+        f"but chunk_size={chunk_size} -- the full projection was materialized"
+    )
