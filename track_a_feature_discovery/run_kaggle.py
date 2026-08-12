@@ -108,6 +108,20 @@ def log_disk_usage(label: str, warn_gb: float = 18.0) -> None:
         log(f"  WARNING: HF cache >= {warn_gb}GB -- approaching Kaggle's ~20GB disk cap")
 
 
+def log_gpu_memory(label: str) -> None:
+    """No-ops on non-CUDA devices (this development machine has none, so
+    this path is untested against real numbers -- see README.md's
+    'build_layer_lookup OOM fix' section). Uses max_memory_allocated, which
+    is reset explicitly before the vocab-projection step so the peak it
+    reports isolates that step rather than accumulating across the whole
+    run."""
+    if not torch.cuda.is_available():
+        return
+    allocated = torch.cuda.memory_allocated() / (1024 ** 3)
+    peak = torch.cuda.max_memory_allocated() / (1024 ** 3)
+    log(f"gpu [{label}]: allocated={allocated:.2f}GB peak={peak:.2f}GB")
+
+
 # ---------------------------------------------------------------------------
 # fp16 NaN/overflow watch. fp16 (unlike bf16) has a narrow exponent range and
 # can overflow to inf on activations that bf16/fp32 handle fine -- checked
@@ -209,8 +223,11 @@ def discover_concept_kaggle(
     log(f"seed_tokens={seed_tokens} neg_toks={neg_toks}")
 
     saes_by_layer: dict[int, object] = {}
-    log("building vocab-projection lookups...")
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    log("building vocab-projection lookups (chunked -- see vocab_projection.py::FEATURE_CHUNK_SIZE)...")
     lls = build_all_layer_lookups(model, MODEL_NAME, layers=layers, device=device, saes_out=saes_by_layer)
+    log_gpu_memory("post-vocab-projection")
 
     candidates_ckpt = checkpoint_dir / "candidates.json"
     candidates = load_candidates_checkpoint(candidates_ckpt)
@@ -328,6 +345,7 @@ def main():
     model.requires_grad_(False)
     log("model loaded")
     log_disk_usage("post-model-load")
+    log_gpu_memory("post-model-load")
 
     if args.sweep_batch_sizes:
         with torch.no_grad():
@@ -345,6 +363,7 @@ def main():
     df.to_parquet(out_path, index=False)
     log(f"wrote {len(df)} candidate features to {out_path}")
     log_disk_usage("finish")
+    log_gpu_memory("finish")
 
 
 if __name__ == "__main__":
