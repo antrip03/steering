@@ -257,6 +257,83 @@ wasn't available to verify against, so treat the crash-correlation claim as
 unconfirmed; the OOM arithmetic itself, independent of that report, is
 directly verifiable by reading the code and was confirmed that way).
 
+### `replace_mlp_rows` "No changes made" assertion — investigation (unresolved)
+
+`pisces_ref/editor.py::replace_mlp_rows` asserts that every layer edit
+actually changes `W_out`:
+```python
+assert not torch.allclose(model.blocks[layer].mlp.W_out, layer_backups[layer]), \
+    f"No changes made to the model in layer {layer}"
+```
+This was reported firing during a real Golf/layer-1 discovery run (fp16, T4)
+after 69 candidates were found and one full 85-batch pass completed. That
+run's logs/artifacts aren't available on this machine (no CUDA GPU here, and
+`artifacts/` doesn't exist locally), so the exact candidate/layer that
+triggered it, and how many of the 69 candidates are affected, are **not
+known** — the investigation below is code-level reasoning plus a synthetic,
+GPU-free reproduction, not a run against the real failure.
+
+**Traced the edit math** (`get_hswaps_full_signed`/`get_hswaps_full`,
+`editor.py:279-432`): `clean`, `dirty`, `error_term`, `proj`, `affected`,
+`fixed_affected` are all computed in fp32 (`w_out = ...W_out.float()`
+upcasts before any of it). The one fp16 downcast is
+`hswaps.append((index, fixed_affected.to(model_dtype)))`, which only runs
+*after* `not torch.allclose(fixed_affected, clean)` already passed in fp32.
+So the originally-proposed fp16 hypothesis, if true, is specifically about
+that downcast — not about the edit math itself producing a trivially-small
+delta (that case is already filtered out before reaching `hswaps`).
+
+**Found two distinct, code-grounded mechanisms that produce this exact
+symptom**, only one of which is the fp16 hypothesis:
+
+1. **fp16 storage-rounding collapse** (the proposed hypothesis): the fp32
+   edit is confirmed non-negligible, but `.to(model_dtype)` rounds it away.
+   A synthetic CPU reproduction (coherent single-direction delta at
+   `d_model=2304`, mirroring how one SAE latent's decode contributes to a
+   row) confirms this is *possible*, but only below roughly a **1e-7
+   relative** perturbation of the row's own magnitude — about 1000x smaller
+   than fp16's ~1e-3 rounding granularity alone would suggest, because
+   `torch.allclose`'s default `rtol=1e-5` is tighter than fp16 precision, so
+   *every one* of 2304 dimensions has to round-collapse simultaneously for
+   the whole-row comparison to pass. A single element collapses around
+   ~1.5e-4 to 3e-4 relative; the full-row requirement is far stricter than
+   that. Whether this is "easy" to trigger for a real SAE decoder direction
+   depends on how concentrated/sparse that direction is — not something
+   knowable without the actual SAE weights.
+2. **Empty edit set (dead SAE encoder feature)** — not proposed in the
+   original hypothesis, found while tracing the code: `encoded = w_out @
+   sae.W_enc[:, feature.id]`. If that feature's encoder column is exactly
+   zero (a common, well-documented phenomenon in trained SAEs — "dead
+   features" — and structurally unrelated to `search_features`, which only
+   ever looks at the *decoder* direction), `thresh=0` and `high_indices=[]`,
+   so `hswaps` for that layer is empty. `replace_mlp_rows` then has nothing
+   to assign, `changed` stays byte-identical to `backup`, and the assertion
+   fires **deterministically, in any precision** — nothing to do with fp16.
+
+These two are trivially distinguishable by one fact this investigation
+doesn't have: whether `switches` was empty or non-empty at the point of
+failure. Added `debug_log_noop_edits` (default `False`, existing behavior
+completely unchanged) to `replace_mlp_rows`/`steer_features`/
+`unlearn_concept` (`pisces_ref/editor.py`) so the next real run can capture
+this directly instead of just crashing — when a no-op is detected and the
+flag is on, it logs which of the two cases occurred (and, for the
+non-empty case, each affected index's edit-delta norm and relative
+magnitude) and continues instead of raising. Verified with
+`pisces_ref/test_editor.py` (5 tests, no GPU/real SAE needed — stubs
+`sae_lens` since `editor.py` imports it at module level purely for other
+functions): default behavior is unchanged (still asserts on a no-op, still
+applies/reverts real edits normally), and the diagnostic correctly
+distinguishes both no-op causes, including a realistic collapsed-delta case
+(a 2e-4 relative perturbation, which is fp32-visible but fp16-identical).
+
+**Not done, and out of scope for this pass**: enabling the flag on an
+actual Kaggle run, counting how many of the real 69 candidates are affected,
+and any actual fix (skip-and-log vs. fp32-comparison-only mixed precision) —
+per the task's own instruction to report first and wait for review. Whoever
+has GPU access to the failing run should pass `debug_log_noop_edits=True`
+through to `unlearn_concept`/`get_feature_effect` for that run; the printed
+output directly answers which mechanism (or both) is occurring and how often.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
