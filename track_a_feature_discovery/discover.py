@@ -121,14 +121,20 @@ def cascade_filter_candidates(model, candidates, forget_text, signs, seed_tokens
 
 def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
-    reduced: bool = False,
+    reduced: bool = False, debug_log_noop_edits: bool = False,
 ) -> pd.DataFrame:
     """reduced=True applies every Step 2 runtime reduction together (see
     reductions.py for each one's rationale): tightened VocabProj minmatch,
     cascade prefiltering, a reduced+evenly-spaced effect-measurement corpus,
     and early-exit. reduced=False (default) preserves the exact original,
     unrestricted behavior -- this flag exists specifically so the same
-    function can be called both ways for Step 2.5's validation diff."""
+    function can be called both ways for Step 2.5's validation diff.
+
+    debug_log_noop_edits=True (default False) enables pisces_ref/editor.py's
+    replace_mlp_rows diagnostic instead of letting a no-op edit crash with
+    "No changes made to the model in layer X" -- see
+    track_a_feature_discovery/README.md's investigation section for what it
+    distinguishes and why."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -176,6 +182,7 @@ def discover_concept(
         model, effect_candidates, effect_text, signs, seed_tokens, neg_toks, filter_by_act=True,
         checkpoint_dir=str(checkpoint_dir),
         early_exit_after_batches=early_exit_after_batches, early_exit_margin=EARLY_EXIT_MARGIN,
+        debug_log_noop_edits=debug_log_noop_edits,
     )
     selected = filter_features_by_mmlu(
         model, effect_filtered, signs,
@@ -232,6 +239,17 @@ def main():
             "and --layers defaults (not overrides -- pass either explicitly to "
             "override) to REDUCED_CONCEPTS / MIDDLE_LAYERS. Omit for the exact "
             "original, unrestricted behavior."
+        ),
+    )
+    parser.add_argument(
+        "--debug-log-noop-edits",
+        action="store_true",
+        help=(
+            "If a layer edit turns out to be a no-op, log which of two causes it "
+            "was (empty switch list vs. a real edit that collapsed to identical "
+            "storage) and continue, instead of crashing with pisces_ref/editor.py's "
+            "'No changes made to the model in layer X' assertion. See "
+            "track_a_feature_discovery/README.md's investigation section."
         ),
     )
     args = parser.parse_args()
@@ -294,7 +312,10 @@ def main():
     with torch.no_grad():
         for concept in concepts:
             try:
-                df = discover_concept(model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced)
+                df = discover_concept(
+                    model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced,
+                    debug_log_noop_edits=args.debug_log_noop_edits,
+                )
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
                 continue
