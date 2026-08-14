@@ -352,6 +352,36 @@ run should pass `debug_log_noop_edits=True`
 through to `unlearn_concept`/`get_feature_effect` for that run; the printed
 output directly answers which mechanism (or both) is occurring and how often.
 
+### CUDA OOM a few batches into a real run — root cause found and fixed
+
+Separate from the assertion above: the same `--debug-log-noop-edits` Golf/
+layer-1 run hit a real `torch.OutOfMemoryError` a few batches in (`Tried to
+allocate 536.00 MiB... 1.66 GiB is reserved by PyTorch but unallocated`),
+crashing during a plain forward pass unrelated to the no-op investigation.
+
+Root cause: `SAEConfig.get()` (`pisces_ref/editor.py`) had no caching, and
+`get_hswaps_full(_signed)` calls it once per candidate feature **per
+batch** via `unlearn_concept` — for Golf/layer-1's 69 candidates × 85
+batches, that's up to **5,865 separate fresh `SAE.from_pretrained` loads**
+of the exact same never-changing layer-1 SAE. Thousands of ~300-400MB
+alloc/free cycles of an unchanging object is exactly what fragments
+PyTorch's caching allocator until a normal-sized allocation can't find
+contiguous space despite nominal free memory left — consistent with the
+"reserved but unallocated" detail in the error.
+
+**Fixed**: `SAEConfig.get()` now caches by `(release, sae_id, device)`, so
+each distinct SAE is loaded exactly once and reused across every
+subsequent call. Safe because the SAE is never mutated by any caller (only
+`.W_enc`/`.W_dec`/`.encode`/`.decode` are read). Verified with a test that
+mocks `SAE.from_pretrained` and confirms identical `(release, sae_id,
+device)` returns the same object and calls the real loader exactly once,
+while a different layer correctly gets its own separate load.
+
+Not verified against the real Kaggle failure directly (no GPU on this
+machine) — the fix addresses the exact mechanism the error points to, but
+whether it fully eliminates the OOM on a real 85-batch run, or just delays
+it, needs confirming on an actual rerun.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
