@@ -326,11 +326,29 @@ applies/reverts real edits normally), and the diagnostic correctly
 distinguishes both no-op causes, including a realistic collapsed-delta case
 (a 2e-4 relative perturbation, which is fp32-visible but fp16-identical).
 
-**Not done, and out of scope for this pass**: enabling the flag on an
-actual Kaggle run, counting how many of the real 69 candidates are affected,
-and any actual fix (skip-and-log vs. fp32-comparison-only mixed precision) —
-per the task's own instruction to report first and wait for review. Whoever
-has GPU access to the failing run should pass `debug_log_noop_edits=True`
+**Update — real data from a Kaggle T4 run (`discover.py --concept Golf
+--layers 1 --debug-log-noop-edits`, `bf16` — note `discover.py` hardcodes
+`bfloat16` unconditionally, not fp16; "fp16" above should be read as
+"whichever narrow-precision dtype is in play"):** the diagnostic fired,
+confirming mechanism 2 (empty switches / dead SAE encoder column) — every
+occurrence observed so far says `0 switches were computed at all`, never
+the storage-collapse variant. Exactly one debug line appeared per batch
+(never zero, never two+ within a batch), consistent with a single
+recurring dead candidate rather than a systemic failure — but the original
+diagnostic only logged the layer, not the feature, so this couldn't be
+confirmed with certainty. **Fixed**: `replace_mlp_rows` now also accepts
+`layer_features` (the `Feature` objects `steer_features` already has in
+scope) purely for the log line, so the next run will print the exact
+`Feature(layer=.., id=.., neg=..)` involved instead of just the layer.
+Still not known: whether it's the same feature every batch, and whether
+the storage-collapse mechanism ever occurs in this run — needs a rerun
+with the updated diagnostic.
+
+**Not done, and out of scope for this pass**: counting how many of the
+real 69 candidates are affected, and any actual fix (skip-and-log vs.
+fp32-comparison-only mixed precision) — per the task's own instruction to
+report first and wait for review. Whoever has GPU access to the failing
+run should pass `debug_log_noop_edits=True`
 through to `unlearn_concept`/`get_feature_effect` for that run; the printed
 output directly answers which mechanism (or both) is occurring and how often.
 
