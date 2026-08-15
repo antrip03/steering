@@ -415,6 +415,31 @@ and excludes others, firing counts accumulate correctly across batches, and
 checkpoint resume skips completed batches while adding to (not replacing)
 the prior count.
 
+**Update — confirmed fixed on a real rerun, and a third issue found.**
+Both stages completed successfully: the effect-measurement stage that
+previously crashed at batch 4-5 ran all 85 batches (~1h43m this time), and
+the activation-counting stage that previously crashed at batch 64/85 also
+completed all 85 batches — in just 66 seconds, confirming `names_filter`
+helped both memory *and* speed (restricting the cache is much cheaper than
+building it for the whole model). Next: `filter_features_by_mmlu`
+(`pisces_ref/feature_finder.py`) stalled for several minutes with no
+visible output.
+
+Root cause, found by reading `evaluate_mmlu` (`pisces_ref/evals.py`):
+`load_dataset("cais/mmlu", "all")` with no `split=` argument eagerly
+generates *every* split in the "all" config — test, validation, dev, and
+`auxiliary_train` (99,842 rows) — even though the function only ever reads
+`ds["test"]`. The stall was that unused split being generated for nothing;
+GPU utilization staying active during the stall (confirmed on the real
+run) is consistent with this — genuine, if wasteful, work, not a hang.
+**Fixed**: `load_dataset("cais/mmlu", "all", split="test")` loads only the
+split that's actually used. Not covered by a dedicated test — `evals.py`'s
+import chain (`transformers`, `openai`, `peft`, `transformer_lens`,
+`google.generativeai`) is heavy enough that mocking it all for one line
+relying on a well-established `datasets` library contract
+(`split=` returns a `Dataset` directly, not a `DatasetDict`) wasn't judged
+worth it; relying on code review and the next real run instead.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
