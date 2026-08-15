@@ -377,10 +377,43 @@ mocks `SAE.from_pretrained` and confirms identical `(release, sae_id,
 device)` returns the same object and calls the real loader exactly once,
 while a different layer correctly gets its own separate load.
 
-Not verified against the real Kaggle failure directly (no GPU on this
-machine) — the fix addresses the exact mechanism the error points to, but
-whether it fully eliminates the OOM on a real 85-batch run, or just delays
-it, needs confirming on an actual rerun.
+**Update — confirmed fixed for this stage on a real rerun.** The SAE-caching
+fix worked: the 85-batch effect-measurement stage that previously crashed
+at batch 4-5 completed all 85 batches (~94 minutes). The feature-ID logging
+also resolved the earlier open question — every no-op debug line across
+all 85 batches named the exact same candidate, `Feature(layer=1,
+id=13028, neg=False)`, confirming it's one recurring dead SAE encoder
+column, not a systemic problem or multiple different candidates.
+
+### A second, separate CUDA OOM — in a different function entirely
+
+Immediately after the effect-measurement stage completed, the very next
+stage (`get_feature_activations`, called from
+`filter_features_by_effect_and_activations` when `filter_by_act=True`) hit
+its *own* `torch.OutOfMemoryError`, at batch 64/85, with memory now
+essentially fully exhausted (`14.54/14.56 GiB in use, 18.81 MiB free`) —
+notably worse than the first OOM's numbers, and via a completely different
+mechanism (`model.run_with_cache_with_saes`, not the per-candidate
+`unlearn_concept` edit loop). This function also had **no checkpointing at
+all**, meaning a bare crash-and-retry would have required redoing the
+entire ~94-minute effect-measurement stage first, for nothing.
+
+Root cause: `run_with_cache_with_saes` caches every hook point across the
+whole 26-layer model by default, but this function only ever reads one
+`hook_sae_acts_post` tensor per unique layer among the candidates (here,
+just layer 1). **Fixed**: added a `names_filter` restricting the cache to
+exactly the hooks this function reads, and added checkpoint/resume
+mirroring `get_feature_effect`'s own (save `results` + next batch index
+after every batch; resume and skip completed batches on restart).
+`names_filter` is a long-standing, stable `transformer_lens` parameter, and
+the traceback confirms `run_with_cache_with_saes` forwards to
+`self.run_with_cache`, but — same caveat as the first fix — whether this
+fully eliminates the OOM rather than just reducing it isn't verified
+against the real failure (no GPU on this machine). Verified with 3 tests
+against a stub model: `names_filter` receives exactly the needed hook names
+and excludes others, firing counts accumulate correctly across batches, and
+checkpoint resume skips completed batches while adding to (not replacing)
+the prior count.
 
 ## Requirements
 
