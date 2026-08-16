@@ -565,6 +565,30 @@ problem worth a methodology change (e.g., an explicit "no-op edit ->
 auto-exclude" step) isn't decided here; flagging it rather than silently
 changing PISCES's selection semantics.
 
+### A fifth call site — cascade_filter_candidates, discover.py-side this time
+
+With `VOCABPROJ_MINMATCH` back to 1, the first real `--reduced` run to
+actually reach cascade filtering (previously blocked entirely by the
+minmatch bug) hit the exact same bare assertion again — one candidate into
+`cascade_filter_candidates`'s own `get_feature_effect` call. This function
+lives in `discover.py`, not `pisces_ref`, and calls `get_feature_effect`
+directly, bypassing `filter_features_by_effect_and_activations` (already
+wired) entirely — a separate, unwired path. **Fixed**: threaded
+`debug_log_noop_edits` through here too, and proactively did the same for
+`run_kaggle.py`'s three equivalent call sites (which have the identical
+gap but haven't been run for real yet), adding `--debug-log-noop-edits`
+there as well. Verified with a new test mocking `get_feature_effect`
+directly.
+
+This makes five separate places `debug_log_noop_edits` needed wiring
+(`get_feature_effect`'s own loop, `filter_features_by_effect_and_activations`
+forwarding it, `filter_features_by_mmlu`, `cascade_filter_candidates` in
+both scripts) — the same latent bug, found incrementally because each real
+run only exercises the call sites its current stage reaches. Worth
+treating with suspicion if a `--debug-log-noop-edits` run still crashes
+bare: check whether a new, still-unwired path was hit before assuming the
+diagnostic itself is broken.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
