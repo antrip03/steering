@@ -256,6 +256,40 @@ test at additional middle layers to see if 6 was unusual; or drop this
 reduction and keep `minmatch=1` while retaining the other three, which
 remain unaffected by this finding.
 
+**Follow-up — swept, and there's no intermediate value.** Built
+`minmatch_sweep.py` (loads the model/SAE once, then sweeps several
+`minmatch` values cheaply — `search_features` itself is fast; only the
+downstream effect-measurement/activation/MMLU stages, not needed to answer
+this, are what's expensive) and ran it at layer 6 for `minmatch` 1 through
+5:
+
+```
+minmatch  candidates
+       1          92
+       2           0
+       3           0
+       4           0
+       5           0
+```
+
+Not a gradual falloff — a hard cliff between 1 and 2. Every value from 2
+to 5 is equally catastrophic; there is no viable intermediate threshold
+for Golf's seed-token list at this layer. Leading hypothesis (not
+verified against other concepts): PISCES's own hand-curated seed lists are
+tightly-clustered proper nouns (e.g. Harry Potter's character names) that
+plausibly co-occur within a single feature's top-tokens naturally, while
+this project's TF-IDF-extracted lists for concepts like Golf (`golf`,
+`Tour`, `hole`, `par`, `golfer`, `PGA`, `tee`, `Championship`) are more
+generic English vocabulary that likely maps to more scattered feature
+directions — making even 2-token co-occurrence within one feature rare
+regardless of the exact threshold chosen.
+
+**Conclusion for this reduction**: `VOCABPROJ_MINMATCH` should stay at 1
+(i.e. drop this specific reduction) rather than any value ≥2, at least for
+concepts with TF-IDF-derived generic-vocabulary seed lists like Golf. The
+other three reductions (cascade filtering, reduced effect-measurement
+corpus, early-exit) are unaffected by this finding and remain viable.
+
 ### `build_layer_lookup` OOM fix (chunked vocabulary projection)
 
 `vocab_projection.py::build_layer_lookup` used to project an SAE's *entire*
