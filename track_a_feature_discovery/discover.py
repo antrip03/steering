@@ -83,7 +83,10 @@ def get_concept_data(cvs: list[dict], concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
-def cascade_filter_candidates(model, candidates, forget_text, signs, seed_tokens, neg_toks, cascade_batches, keep_fraction, batch_size=3):
+def cascade_filter_candidates(
+    model, candidates, forget_text, signs, seed_tokens, neg_toks, cascade_batches, keep_fraction,
+    batch_size=3, debug_log_noop_edits: bool = False,
+):
     """Cheap pre-pass on a small (evenly-spaced) subset of batches, used to
     drop the weakest half of candidates before the full (reduced) measurement
     runs on the survivors. Uses the same underlying get_feature_effect
@@ -95,14 +98,25 @@ def cascade_filter_candidates(model, candidates, forget_text, signs, seed_tokens
     that's weak on the cascade subset but happens to be strong specifically
     on the batches the cascade subset skipped could be dropped here even
     though the unreduced run would have kept it. Step 2.5 validates this
-    empirically; if it changes the selected FC, don't silently keep it."""
+    empirically; if it changes the selected FC, don't silently keep it.
+
+    debug_log_noop_edits must be threaded through explicitly here: this
+    function calls get_feature_effect DIRECTLY (bypassing
+    filter_features_by_effect_and_activations, which already forwards the
+    flag), so it's a separate call site from the one get_feature_effect's
+    own no-op protection was originally wired into -- a real Kaggle run hit
+    exactly this gap (bare "No changes made to the model" crash here, one
+    candidate in, on --reduced's very first stage) before this was added."""
     lines = forget_text.splitlines()
     cascade_lines = evenly_spaced_subsample_lines(lines, cascade_batches)
 
     pos_tok_ids = [model.to_single_token(tok) for tok in seed_tokens]
     neg_tok_ids = [model.to_single_token(tok) for tok in neg_toks]
 
-    pos_effects, neg_effects = get_feature_effect(model, candidates, signs, cascade_lines, pos_tok_ids, neg_tok_ids, batch_size=batch_size)
+    pos_effects, neg_effects = get_feature_effect(
+        model, candidates, signs, cascade_lines, pos_tok_ids, neg_tok_ids, batch_size=batch_size,
+        debug_log_noop_edits=debug_log_noop_edits,
+    )
 
     def score(feature):
         key = (feature.layer, feature.id)
@@ -186,6 +200,7 @@ def discover_concept(
         effect_candidates = cascade_filter_candidates(
             model, candidates, forget_text, signs, seed_tokens, neg_toks,
             CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION,
+            debug_log_noop_edits=debug_log_noop_edits,
         )
         effect_lines = evenly_spaced_subsample_lines(forget_text.splitlines(), EFFECT_MEASUREMENT_BATCHES)
         effect_text = "\n".join(effect_lines)

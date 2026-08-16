@@ -209,7 +209,7 @@ def sweep_batch_sizes(model, forget_text: str, sizes: list[int], n_probe_batches
 
 def discover_concept_kaggle(
     model, cvs: list[dict], concept: str, layers: list[int], device: str,
-    effect_batch_size: int, checkpoint_dir: Path,
+    effect_batch_size: int, checkpoint_dir: Path, debug_log_noop_edits: bool = False,
 ) -> pd.DataFrame:
     concept_data = get_concept_data(cvs, concept)
 
@@ -246,6 +246,7 @@ def discover_concept_kaggle(
     effect_candidates = cascade_filter_candidates(
         model, candidates, forget_text, signs, seed_tokens, neg_toks,
         CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION, batch_size=effect_batch_size,
+        debug_log_noop_edits=debug_log_noop_edits,
     )
 
     effect_lines = evenly_spaced_subsample_lines(forget_text.splitlines(), EFFECT_MEASUREMENT_BATCHES, batch_size=effect_batch_size)
@@ -258,7 +259,7 @@ def discover_concept_kaggle(
         model, effect_candidates, effect_text, signs, seed_tokens, neg_toks, filter_by_act=True,
         checkpoint_dir=str(checkpoint_dir),
         early_exit_after_batches=EARLY_EXIT_AFTER_BATCHES, early_exit_margin=EARLY_EXIT_MARGIN,
-        batch_size=effect_batch_size,
+        batch_size=effect_batch_size, debug_log_noop_edits=debug_log_noop_edits,
     )
     check_for_nonfinite("effect measurement", pos_effects)
     check_for_nonfinite("effect measurement (neg)", neg_effects)
@@ -268,6 +269,7 @@ def discover_concept_kaggle(
     selected = filter_features_by_mmlu(
         model, effect_filtered, signs,
         checkpoint_path=str(checkpoint_dir / "mmlu.ckpt"),
+        debug_log_noop_edits=debug_log_noop_edits,
     )
     selected_keys = {(f.layer, f.id, f.neg) for f in selected}
     log(f"{len(selected)} features survived filtering (selected=True)")
@@ -315,6 +317,19 @@ def main():
                               "mounted read/write, or /kaggle/working saved as a dataset version) for resume to help "
                               "across the 12-hour cap. Defaults to artifacts/checkpoints/<concept>/, which is NOT "
                               "persistent on Kaggle unless you arrange that yourself.")
+    parser.add_argument(
+        "--debug-log-noop-edits",
+        action="store_true",
+        help=(
+            "If a layer edit turns out to be a no-op, log which of two causes it was "
+            "and continue, instead of crashing with pisces_ref/editor.py's 'No changes "
+            "made to the model in layer X' assertion. Off by default here matches "
+            "discover.py's default, but strongly recommended: a real discover.py run "
+            "hit this exact crash at three separate call sites (get_feature_effect's "
+            "own loop, cascade_filter_candidates, filter_features_by_mmlu) before all "
+            "three were wired -- see track_a_feature_discovery/README.md."
+        ),
+    )
     args = parser.parse_args()
 
     layers = args.layers if args.layers is not None else MIDDLE_LAYERS
@@ -357,6 +372,7 @@ def main():
         df = discover_concept_kaggle(
             model, cvs, args.concept, layers=layers, device=args.device,
             effect_batch_size=args.batch_size, checkpoint_dir=checkpoint_dir,
+            debug_log_noop_edits=args.debug_log_noop_edits,
         )
 
     out_path = ARTIFACTS_DIR / f"{concept_slug}.parquet"
