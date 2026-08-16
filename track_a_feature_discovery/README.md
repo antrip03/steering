@@ -440,6 +440,47 @@ relying on a well-established `datasets` library contract
 (`split=` returns a `Dataset` directly, not a `DatasetDict`) wasn't judged
 worth it; relying on code review and the next real run instead.
 
+### A fourth issue — the same no-op-edit crash, one call site later, unprotected
+
+The MMLU stall turned out to be a false alarm (real work, not a hang — see
+above), but the same process (still running from before the MMLU fix
+existed, so it hit the un-fixed dataset-loading path again) then crashed
+with the exact bare `AssertionError: No changes made to the model in layer
+1` inside `filter_features_by_mmlu` — no diagnostic output at all, because
+`debug_log_noop_edits` was only ever wired into `get_feature_effect`'s
+`unlearn_concept` call. `filter_features_by_mmlu` has its own, separate
+`unlearn_concept` call site that was never touched.
+
+**A real correction to the earlier writeup in this section**: it was
+claimed that a candidate whose edit is a no-op throughout the effect-
+measurement stage would "fail the selection criterion and get filtered
+out." That's wrong. `filter_features_by_effect_and_activations`'s effect
+check is `if pos_effect > 0 or neg_effect < -2: continue` (i.e., *remove*
+the feature) — for a fully-inert candidate, `pos_effect=0` and
+`neg_effect=0`, and neither `0 > 0` nor `0 < -2` is true, so the feature is
+**kept**, not removed, by this check alone. Only the separate real-forward-
+pass activation check (`activations[...] == 0`) is positioned to catch a
+truly inert candidate, and it measures something different (whether the
+feature's SAE encoder fires on real text) than whether
+`get_hswaps_full(_signed)` can find a qualifying weight-edit for it under
+the `k=0.9` threshold and current dtype. A candidate can plausibly fire in
+real activations while still having no viable edit, which is exactly
+consistent with reaching `filter_features_by_mmlu` and crashing there.
+
+**Fixed**: `debug_log_noop_edits` now threads into
+`filter_features_by_mmlu`'s `unlearn_concept` call too — same log-and-
+continue behavior as the other call site, verified with a new test that
+mocks `unlearn_concept` directly to isolate the plumbing regression from
+the (already separately tested) SAE-editing machinery. Still open: with
+this candidate's edit now a no-op that gets logged rather than crashing,
+its MMLU score will reflect the unedited baseline model (since nothing was
+actually changed), which will very likely pass the specificity check
+trivially — an inert candidate could end up marked `selected=True` for
+reasons unrelated to genuinely erasing anything. Whether that's a real
+problem worth a methodology change (e.g., an explicit "no-op edit ->
+auto-exclude" step) isn't decided here; flagging it rather than silently
+changing PISCES's selection semantics.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
