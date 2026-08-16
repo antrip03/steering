@@ -211,18 +211,50 @@ source verification is in that module's docstring; summary:
    (Gun, Mass Shooting). Used only as the `--reduced` default for
    `--concept`; pass `--concept` explicitly to override.
 
-**Validation status (Step 2.5)**: the task's required check — run Golf once
-at original settings and once at `--reduced`, diff the selected FC, report
-exact matches/differences — needs a real Gemma-2-2B-it forward-pass run and
-has **not been executed**. This machine has no CUDA GPU (AMD Radeon 680M
-iGPU) and 14.3GB RAM, and a prior session already observed near-OOM loading
-the model alone in fp32; a full-corpus, all-26-layer, `minmatch=1` "original
-settings" run is the most expensive possible configuration in this whole
-project and was not attempted here. Treat every reduction above as
-**unvalidated** against the real model until this run is done — this
-directory's non-`--reduced` default remains PISCES's original, unrestricted
-behavior specifically so that comparison stays possible once a suitable
-machine is available.
+**Validation status (Step 2.5) — DONE, and it FAILED.** Both runs executed
+on a real Kaggle T4 for Golf/layer-1 (this development machine has no CUDA
+GPU, so this required real GPU hardware, obtained separately):
+
+| | original (`minmatch=1`) | `--reduced` (`minmatch=5`) |
+|---|---|---|
+| candidates found | 69 | **0** |
+| `selected=True` | 58 | **0** |
+
+`VOCABPROJ_MINMATCH=5` does not just shift a few borderline candidates —
+it **eliminates the entire candidate pool** for this concept/layer. None
+of layer 1's 16,384 SAE features had a top/bottom-50 vocab-projection
+overlap of ≥5 tokens with Golf's 8 seed tokens, versus 69 features clearing
+the ≥1 bar. This is the exact "if results diverge, report clearly rather
+than silently keeping the reduction" scenario the task called for — and
+they diverge completely. **`VOCABPROJ_MINMATCH=5` is not safe to keep as
+the `--reduced` default without further work.**
+
+Two things this result does *not* tell us, worth being precise about
+rather than overreaching:
+- This ran at `--layers 1` specifically to match the original run for a
+  controlled comparison. `--reduced`'s actual intended default layer scope
+  is `MIDDLE_LAYERS` (3-12), not layer 1 — whether `minmatch=5` is equally
+  catastrophic at those layers, less severe, or just as bad, is untested.
+  Layer 1 is an early layer; it's plausible (not confirmed) that deeper
+  layers have more semantically specialized per-feature token associations
+  that clear a ≥5-token bar more easily.
+- This project's seed tokens are auto-extracted via TF-IDF
+  (`seed_tokens.py`), not PISCES's own hand-curated lists — the paper's
+  `alpha=4` finding was calibrated against their token construction method,
+  which may produce systematically different overlap statistics than this
+  project's.
+
+Candidate options, not decided here: test `minmatch=5` at the real
+`MIDDLE_LAYERS` range before writing it off entirely; try an intermediate
+value (2 or 3) that's tighter than the permissive `minmatch=1` default
+without being this catastrophic; or drop this specific reduction and keep
+`minmatch=1` while retaining the other three (cascade filtering, reduced
+corpus, early-exit), which weren't invalidated by this result. The other
+reductions' own validation status is unaffected by this finding, but
+wasn't separately isolated either (this run changed all of them at once,
+per `--reduced`'s design) — a Golf/layer-1 run with *only* `minmatch=5`
+changed, everything else at original settings, would isolate this specific
+reduction's effect from the others' if that's wanted next.
 
 ### `build_layer_lookup` OOM fix (chunked vocabulary projection)
 
