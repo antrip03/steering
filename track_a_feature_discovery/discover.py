@@ -123,10 +123,15 @@ def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
     reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
 ) -> pd.DataFrame:
-    """reduced=True applies every Step 2 runtime reduction together (see
-    reductions.py for each one's rationale): tightened VocabProj minmatch,
-    cascade prefiltering, a reduced+evenly-spaced effect-measurement corpus,
-    and early-exit. reduced=False (default) preserves the exact original,
+    """reduced=True applies the remaining Step 2 runtime reductions together
+    (see reductions.py for each one's rationale): cascade prefiltering, a
+    reduced+evenly-spaced effect-measurement corpus, and early-exit.
+    VocabProj minmatch tightening was tried and dropped -- real-run
+    validation on Golf showed minmatch=5 collapses the candidate pool to
+    zero with no viable intermediate value (see reductions.py's
+    VOCABPROJ_MINMATCH comment and README.md's "Runtime reductions"
+    section), so VOCABPROJ_MINMATCH is back to 1 and --reduced no longer
+    changes it. reduced=False (default) preserves the exact original,
     unrestricted behavior -- this flag exists specifically so the same
     function can be called both ways for Step 2.5's validation diff.
 
@@ -136,14 +141,12 @@ def discover_concept(
     track_a_feature_discovery/README.md's investigation section for what it
     distinguishes and why.
 
-    minmatch_override, if given, replaces whatever minmatch --reduced would
-    otherwise pick, independent of `reduced` -- exists specifically to
-    isolate VOCABPROJ_MINMATCH from the other three --reduced reductions
-    (cascade prefiltering, reduced corpus, early-exit all stay off unless
-    reduced=True is ALSO passed), for testing whether minmatch=5 alone is
-    what collapsed Golf/layer-1's candidate pool to zero, or whether it's
-    something layer-1-specific per PISCES's paper noting VocabProj is less
-    reliable in early layers."""
+    minmatch_override, if given, overrides VOCABPROJ_MINMATCH's value
+    directly (currently 1, same as the default) -- kept as a standing way to
+    re-test minmatch on a per-run basis (e.g. against a different concept)
+    without needing another code change, after minmatch_sweep.py showed
+    Golf's collapse was a hard cliff (92 candidates at 1, zero at every
+    value 2-5), not a gradual one."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -246,9 +249,11 @@ def main():
         "--reduced",
         action="store_true",
         help=(
-            "Apply the Step 2 runtime reductions (see reductions.py): tightened "
-            "VocabProj minmatch, cascade prefiltering, reduced+evenly-spaced "
-            "effect-measurement corpus, early-exit. Also changes the --concept "
+            "Apply the remaining Step 2 runtime reductions (see reductions.py): "
+            "cascade prefiltering, reduced+evenly-spaced effect-measurement corpus, "
+            "early-exit. VocabProj minmatch tightening was tried and dropped after "
+            "real-run validation (see VOCABPROJ_MINMATCH's comment in reductions.py) "
+            "-- --reduced no longer changes it. Also changes the --concept "
             "and --layers defaults (not overrides -- pass either explicitly to "
             "override) to REDUCED_CONCEPTS / MIDDLE_LAYERS. Omit for the exact "
             "original, unrestricted behavior."
@@ -270,11 +275,10 @@ def main():
         type=int,
         default=None,
         help=(
-            "Override VocabProj's minmatch independent of --reduced -- lets you change "
-            "ONLY this one reduction (e.g. to isolate whether minmatch=5 alone collapses "
-            "a concept/layer's candidate pool) while everything else (batch count, cascade "
-            "prefiltering, early-exit) stays at original settings unless --reduced is ALSO "
-            "passed."
+            "Override VocabProj's minmatch directly (default is 1, same as original "
+            "settings -- the tightened value of 5 was tried and dropped, see "
+            "reductions.py). Kept as a standing way to re-test minmatch on a "
+            "per-run/per-concept basis without another code change."
         ),
     )
     args = parser.parse_args()

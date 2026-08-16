@@ -174,31 +174,40 @@ other 14 concepts be run.
 
 ## Runtime reductions (`--reduced` / `reductions.py`, `kaggle` branch)
 
-`discover.py --reduced` applies four config-level speed-ups on top of the
+`discover.py --reduced` applies three config-level speed-ups on top of the
 unmodified `pisces_ref` selection logic (nothing here changes what "selected"
-*means*, only how much work goes into measuring it). All constants live in
-`reductions.py`, shared with `run_kaggle.py`. Full rationale and per-item
-source verification is in that module's docstring; summary:
+*means*, only how much work goes into measuring it) — originally four; the
+VocabProj-threshold tightening (item 2 below) was tried, real-run validated,
+and **dropped** (see "Validation status" below for the full story). All
+constants live in `reductions.py`, shared with `run_kaggle.py`. Full
+rationale and per-item source verification is in that module's docstring;
+summary:
 
 1. **Effect-measurement corpus**: `get_feature_effect` originally runs over
    every line of a concept's `wikipedia_content` (~85 batches for Golf).
    `--reduced` uses `evenly_spaced_subsample_lines()` to take 20
    representative batches spread across the whole article, not just its
    opening.
-2. **VocabProj threshold**: default `minmatch=1` is far looser than PISCES's
-   own paper (Appendix A.1: "intersection size greater than a threshold alpha
-   (we used alpha = 4)", verified against the actual PDF text — note the
-   strict `>` means `minmatch=5`, not `4`, reproduces it exactly).
-   `--reduced` also runs a cheap `CASCADE_PREFILTER_BATCHES`-batch pre-pass
-   (`cascade_filter_candidates`) that drops the bottom `1 -
-   CASCADE_KEEP_FRACTION` of candidates by a pos/neg-effect heuristic score
-   before the full (already-reduced) measurement — this one is a **heuristic**,
-   not provably exact, unlike the early-exit below. Also enables
-   `early_exit_after_batches` (`pisces_ref/feature_finder.py::get_feature_effect`,
-   `steering-fixes` fork branch): a provably-safe short-circuit that stops
-   evaluating a candidate once its remaining batches mathematically cannot
-   change the keep/drop decision, given softmax-diff values are bounded in
-   `[-1, 1]`.
+2. **~~VocabProj threshold~~ (dropped, back to `minmatch=1`)**: tried
+   `minmatch=5`, matching PISCES's own paper (Appendix A.1: "intersection
+   size greater than a threshold alpha (we used alpha = 4)", verified
+   against the actual PDF text — the strict `>` means `minmatch=5`, not
+   `4`, reproduces it exactly). Real-run validation on Golf found it
+   collapses the entire candidate pool to zero, at both a tested early
+   layer and a tested middle layer, with no viable intermediate value (92
+   candidates at `minmatch=1`, zero at every value from 2 to 5 — a hard
+   cliff). `VOCABPROJ_MINMATCH` is back to 1 in `reductions.py`; `--minmatch`
+   remains available on `discover.py` to re-test this per-run without
+   another code change. `--reduced` also runs a cheap
+   `CASCADE_PREFILTER_BATCHES`-batch pre-pass (`cascade_filter_candidates`)
+   that drops the bottom `1 - CASCADE_KEEP_FRACTION` of candidates by a
+   pos/neg-effect heuristic score before the full (already-reduced)
+   measurement — this one is a **heuristic**, not provably exact, unlike
+   the early-exit below. Also enables `early_exit_after_batches`
+   (`pisces_ref/feature_finder.py::get_feature_effect`, `steering-fixes`
+   fork branch): a provably-safe short-circuit that stops evaluating a
+   candidate once its remaining batches mathematically cannot change the
+   keep/drop decision, given softmax-diff values are bounded in `[-1, 1]`.
 3. **Layer scope**: `MIDDLE_LAYERS = range(3, 13)`, per the task's EMBER
    Figure 7 citation — **not independently verified** here (unlike the
    alpha=4 claim above; the EMBER paper wasn't available locally to check
@@ -289,6 +298,15 @@ regardless of the exact threshold chosen.
 concepts with TF-IDF-derived generic-vocabulary seed lists like Golf. The
 other three reductions (cascade filtering, reduced effect-measurement
 corpus, early-exit) are unaffected by this finding and remain viable.
+
+**Done in code.** `VOCABPROJ_MINMATCH` in `reductions.py` is now `1`, so
+`--reduced` no longer tightens VocabProj's threshold at all — only the
+other three reductions remain in the bundle. `discover.py --minmatch`
+stays available as a standing per-run override (not a default change) for
+re-testing this against a different concept later, e.g. one with more
+proper-noun-heavy, PISCES-paper-like seed tokens (Homo Sapiens is the
+obvious candidate given its role as this project's max-entanglement stress
+test) — untested so far, since every result above is Golf-only.
 
 ### `build_layer_lookup` OOM fix (chunked vocabulary projection)
 

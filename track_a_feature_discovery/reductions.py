@@ -13,6 +13,8 @@ Verified against source, not assumed:
   is a strict `>`, but search_features' own threshold check is `>= minmatch`
   (see pisces_ref/feature_finder.py::search_features) -- so reproducing
   "intersection size > 4" exactly requires minmatch=5, not minmatch=4.
+  DROPPED as a reduction after real-run validation -- see this constant's
+  own comment below for what was found and why it's back to 1.
 - MIDDLE_LAYERS (layers 3-12): NOT independently verified against EMBER's
   Figure 7 -- that paper wasn't available to check against (unlike PISCES's
   own alpha=4, which was verified directly from the PDF). Flagged here so
@@ -60,12 +62,27 @@ def evenly_spaced_subsample_lines(lines: list[str], n_batches: int, batch_size: 
 
 
 # ---------------------------------------------------------------------------
-# 2.2 -- candidate reduction
+# 2.2 -- candidate reduction -- DROPPED, kept at the original value
 # ---------------------------------------------------------------------------
-# VocabProj token-intersection threshold. Our prior default (discover.py) was
-# minmatch=1 -- far looser than PISCES's own alpha=4 (see module docstring for
-# the >4 vs >=5 nuance).
-VOCABPROJ_MINMATCH = 5
+# Tried minmatch=5, matching PISCES's own paper (alpha=4, see module
+# docstring for the >4 vs >=5 nuance). Real-run validation on Golf found it
+# is not a viable reduction: minmatch=5 collapsed the candidate pool to ZERO
+# at both a tested early layer (1) and a tested middle layer (6), and
+# discover.py's --minmatch override (independent of --reduced) confirmed
+# it's not a confound with the other three reductions or a layer-1-specific
+# VocabProj weakness -- the value itself is the problem. minmatch_sweep.py's
+# sweep at layer 6 (1 through 5) then showed why no intermediate value
+# helps either: 92 candidates at minmatch=1, 0 at every value from 2 to 5 --
+# a hard cliff, not a gradual falloff. Leading hypothesis (not verified
+# against other concepts): PISCES's own hand-curated seed lists are
+# tightly-clustered proper nouns (e.g. Harry Potter's character names) that
+# plausibly co-occur within a single feature's top-tokens naturally, while
+# this project's TF-IDF-extracted lists for concepts like Golf are more
+# generic vocabulary mapping to more scattered feature directions. Back to
+# 1 (the original, unrestricted value) -- --minmatch remains available to
+# re-test this on a per-run basis (e.g. against a proper-noun-heavy concept
+# like Homo Sapiens) without needing to change this default again.
+VOCABPROJ_MINMATCH = 1
 
 # Cascade filtering: a cheap pre-pass on a small subset of the (already
 # reduced) 20 batches, used to drop the bottom half of candidates by effect
