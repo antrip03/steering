@@ -229,32 +229,32 @@ than silently keeping the reduction" scenario the task called for — and
 they diverge completely. **`VOCABPROJ_MINMATCH=5` is not safe to keep as
 the `--reduced` default without further work.**
 
-Two things this result does *not* tell us, worth being precise about
-rather than overreaching:
-- This ran at `--layers 1` specifically to match the original run for a
-  controlled comparison. `--reduced`'s actual intended default layer scope
-  is `MIDDLE_LAYERS` (3-12), not layer 1 — whether `minmatch=5` is equally
-  catastrophic at those layers, less severe, or just as bad, is untested.
-  Layer 1 is an early layer; it's plausible (not confirmed) that deeper
-  layers have more semantically specialized per-feature token associations
-  that clear a ≥5-token bar more easily.
-- This project's seed tokens are auto-extracted via TF-IDF
-  (`seed_tokens.py`), not PISCES's own hand-curated lists — the paper's
-  `alpha=4` finding was calibrated against their token construction method,
-  which may produce systematically different overlap statistics than this
-  project's.
+**Follow-up — isolated, and confirmed not layer-1-specific.** Added
+`--minmatch` (independent of `--reduced`) to test `VOCABPROJ_MINMATCH=5`
+alone, with the other three reductions off (85 batches, no cascade
+prefilter, no early-exit) and at a genuine middle layer:
 
-Candidate options, not decided here: test `minmatch=5` at the real
-`MIDDLE_LAYERS` range before writing it off entirely; try an intermediate
-value (2 or 3) that's tighter than the permissive `minmatch=1` default
-without being this catastrophic; or drop this specific reduction and keep
-`minmatch=1` while retaining the other three (cascade filtering, reduced
-corpus, early-exit), which weren't invalidated by this result. The other
-reductions' own validation status is unaffected by this finding, but
-wasn't separately isolated either (this run changed all of them at once,
-per `--reduced`'s design) — a Golf/layer-1 run with *only* `minmatch=5`
-changed, everything else at original settings, would isolate this specific
-reduction's effect from the others' if that's wanted next.
+```
+python discover.py --concept Golf --layers 6 --minmatch 5
+```
+
+Result: **0 candidates**, same as layer 1. This rules out the "layer-1 is
+an early layer with less semantically specialized VocabProj" hypothesis —
+the collapse happens at layer 6 too, with the other three reductions
+completely out of the picture. `VOCABPROJ_MINMATCH=5` itself is the
+problem, not a confound with cascade filtering/reduced corpus/early-exit,
+and not an early-layer artifact.
+
+What's still open: this project's seed tokens are auto-extracted via
+TF-IDF (`seed_tokens.py`), not PISCES's own hand-curated lists — the
+paper's `alpha=4` finding was calibrated against their token construction
+method, which may produce systematically different (denser) per-feature
+token overlap than this project's shorter, more targeted seed lists. That
+remains the leading candidate explanation, untested. Options for a next
+step, not decided here: try an intermediate `--minmatch` value (2 or 3);
+test at additional middle layers to see if 6 was unusual; or drop this
+reduction and keep `minmatch=1` while retaining the other three, which
+remain unaffected by this finding.
 
 ### `build_layer_lookup` OOM fix (chunked vocabulary projection)
 
