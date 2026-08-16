@@ -121,7 +121,7 @@ def cascade_filter_candidates(model, candidates, forget_text, signs, seed_tokens
 
 def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
-    reduced: bool = False, debug_log_noop_edits: bool = False,
+    reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
 ) -> pd.DataFrame:
     """reduced=True applies every Step 2 runtime reduction together (see
     reductions.py for each one's rationale): tightened VocabProj minmatch,
@@ -134,7 +134,16 @@ def discover_concept(
     replace_mlp_rows diagnostic instead of letting a no-op edit crash with
     "No changes made to the model in layer X" -- see
     track_a_feature_discovery/README.md's investigation section for what it
-    distinguishes and why."""
+    distinguishes and why.
+
+    minmatch_override, if given, replaces whatever minmatch --reduced would
+    otherwise pick, independent of `reduced` -- exists specifically to
+    isolate VOCABPROJ_MINMATCH from the other three --reduced reductions
+    (cascade prefiltering, reduced corpus, early-exit all stay off unless
+    reduced=True is ALSO passed), for testing whether minmatch=5 alone is
+    what collapsed Golf/layer-1's candidate pool to zero, or whether it's
+    something layer-1-specific per PISCES's paper noting VocabProj is less
+    reliable in early layers."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -152,7 +161,10 @@ def discover_concept(
     saes_by_layer: dict[int, object] = {}
     lls = build_all_layer_lookups(model, MODEL_NAME, layers=layers, device=device, saes_out=saes_by_layer)
 
-    minmatch = VOCABPROJ_MINMATCH if reduced else 1
+    if minmatch_override is not None:
+        minmatch = minmatch_override
+    else:
+        minmatch = VOCABPROJ_MINMATCH if reduced else 1
     candidates = search_features(model, lls, seed_tokens, minmatch=minmatch, layers=layers)
     print(f"[{concept}] seed_tokens={seed_tokens} neg_toks={neg_toks} minmatch={minmatch}")
     print(f"[{concept}] {len(candidates)} candidate features from vocab-projection search")
@@ -253,6 +265,18 @@ def main():
             "track_a_feature_discovery/README.md's investigation section."
         ),
     )
+    parser.add_argument(
+        "--minmatch",
+        type=int,
+        default=None,
+        help=(
+            "Override VocabProj's minmatch independent of --reduced -- lets you change "
+            "ONLY this one reduction (e.g. to isolate whether minmatch=5 alone collapses "
+            "a concept/layer's candidate pool) while everything else (batch count, cascade "
+            "prefiltering, early-exit) stays at original settings unless --reduced is ALSO "
+            "passed."
+        ),
+    )
     args = parser.parse_args()
 
     if args.reduced:
@@ -315,7 +339,7 @@ def main():
             try:
                 df = discover_concept(
                     model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced,
-                    debug_log_noop_edits=args.debug_log_noop_edits,
+                    debug_log_noop_edits=args.debug_log_noop_edits, minmatch_override=args.minmatch,
                 )
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
