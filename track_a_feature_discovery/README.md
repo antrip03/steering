@@ -589,6 +589,55 @@ treating with suspicion if a `--debug-log-noop-edits` run still crashes
 bare: check whether a new, still-unwired path was hit before assuming the
 diagnostic itself is broken.
 
+### Step 2.5, completed for real — cascade + reduced corpus + early-exit, Golf/layer-1
+
+With `minmatch=1` fixed and all five `debug_log_noop_edits` call sites
+wired, `discover.py --concept Golf --layers 1 --reduced` ran to completion
+for the first time. `compare_fc.py` result:
+
+```
+Candidate pool: original=69  reduced=69  common=69
+selected=True in original: 58   selected=True in reduced: 29
+exact selection-status matches: 30/69
+39 candidate(s) DIFFER
+```
+
+**This is a real, substantial divergence — not a pass.** But it splits
+into two mechanistically different groups, worth separating before drawing
+conclusions:
+
+- **~30 of the 39** show `effect_score=nan` in the reduced run — these are
+  candidates the cascade prefilter's 5-batch heuristic pre-pass dropped
+  before the full 20-batch measurement ever ran on them. That's cascade
+  working exactly as designed (it's *supposed* to cut the pool before
+  measurement). The concerning part: almost every one of these had a
+  comfortably negative (not borderline) `pos_effect` in the *original*
+  run's full measurement — clearly a keeper, not a marginal case. Cascade's
+  cheap heuristic score ranked them into the bottom half anyway. That's
+  evidence the 5-batch heuristic doesn't correlate well with the real
+  20/85-batch outcome, at least at this layer.
+- **~9 of the 39** have a real, non-nan effect score in *both* runs, but
+  the sign flips near zero — e.g. `Feature(1, 5110, False)`: original
+  `pos_effect=+2.2e-7` (excluded), reduced `pos_effect=-8.3e-7` (kept).
+  Both values are within a few millionths of zero. Nothing was dropped by
+  cascade here; different batch sampling (85 full batches vs. 20
+  evenly-spaced) pushed an already-near-zero value across the `pos_effect
+  > 0` boundary in different directions. This points to something
+  separate from cascade's correctness: at Golf/layer-1, `pos_effect`
+  appears to sit at the numerical noise floor for most candidates, which
+  means the selection outcome here may be inherently unstable regardless
+  of which reduction (if any) is applied — even two "original settings"
+  runs could plausibly disagree on some of these. Untested: whether this
+  noise-floor behavior is layer-1-specific (a weak/early layer, same
+  category of concern as the earlier minmatch investigation) or shows up
+  at middle layers too.
+
+**Not concluded here**: whether this means cascade filtering should be
+dropped (like `VOCABPROJ_MINMATCH` was), whether it needs a better
+heuristic score, or whether the real problem is that layer-1 validation
+runs are too noisy to trust for *any* reduction's validation and a middle
+layer should be used instead. All three are live options.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
