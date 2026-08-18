@@ -638,6 +638,41 @@ heuristic score, or whether the real problem is that layer-1 validation
 runs are too noisy to trust for *any* reduction's validation and a middle
 layer should be used instead. All three are live options.
 
+### Determinism check — original settings run twice, identical
+
+Ran `discover.py --concept Golf --layers 1` (no `--reduced`) a second
+time and diffed it against the first original run with `compare_fc.py`:
+
+```
+Candidate pool: original=69  reduced=69  common=69
+selected=True in original: 58   selected=True in reduced: 58
+exact selection-status matches: 69/69
+>>> Exact match <<<
+```
+
+**This confirms the earlier `--reduced` divergence is real, not GPU
+floating-point noise.** Two runs of the identical config, identical code,
+identical data produced identical output — Golf/layer-1 is fully
+deterministic under original settings. That sharpens the interpretation of
+the 30/69 exact-match result above: the ~9-candidate near-zero sign-flip
+group isn't run-to-run instability, it's a genuine consequence of the
+reduced 20-batch corpus measuring a different (smaller) sample than the
+full 85 batches — a real effect, separate from cascade's own ~30-candidate
+contribution.
+
+**Follow-up in progress**: added `--disable-cascade` (only meaningful with
+`--reduced`) to isolate reduced-corpus + early-exit from cascade
+specifically — skips the cascade prefilter entirely, sending all 69
+candidates straight to the reduced-corpus measurement. Tests whether the
+~9-candidate group persists on its own, without cascade also in the
+picture:
+
+```
+python discover.py --concept Golf --layers 1 --reduced --disable-cascade --debug-log-noop-edits
+```
+
+Not yet run.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
