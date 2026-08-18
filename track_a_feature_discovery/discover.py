@@ -82,6 +82,27 @@ def get_concept_data(cvs: list[dict], concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
+def build_run_tag(reduced: bool, minmatch_override: int | None, disable_cascade: bool) -> str:
+    """Encodes the settings that actually change discover_concept's output
+    into a filesystem-safe tag, so different configurations for the same
+    concept/layers never collide on the same output filename. Previously
+    out_path was concept-only (f"{concept}.parquet"), so running original
+    settings then --reduced then --disable-cascade for the same concept
+    silently overwrote the same file each time -- every real comparison in
+    this investigation needed the file downloaded and manually renamed
+    before the next run, an easy step to forget."""
+    tag = "reduced" if reduced else "original"
+    if reduced and disable_cascade:
+        tag += "_nocascade"
+    if minmatch_override is not None:
+        tag += f"_minmatch{minmatch_override}"
+    return tag
+
+
+def build_layers_slug(layers) -> str:
+    return "all_layers" if layers is None else "layers_" + "_".join(str(x) for x in sorted(layers))
+
+
 def cascade_filter_candidates(
     model, candidates, forget_text, signs, seed_tokens, neg_toks, cascade_batches, keep_fraction,
     batch_size=3, debug_log_noop_edits: bool = False,
@@ -216,8 +237,7 @@ def discover_concept(
     # batches it never actually measured for its own candidates -- corrupting
     # results rather than crashing. Real risk, not hypothetical: this project
     # has already run Golf at layer 1 and layer 6 in the same investigation.
-    layers_slug = "all_layers" if layers is None else "layers_" + "_".join(str(x) for x in sorted(layers))
-    checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug / layers_slug
+    checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug / build_layers_slug(layers)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     effect_candidates = candidates
@@ -413,7 +433,9 @@ def main():
                 print(f"[{concept}] SKIPPED: {e}")
                 continue
 
-            out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}.parquet"
+            run_tag = build_run_tag(args.reduced, args.minmatch, args.disable_cascade)
+            layers_slug = build_layers_slug(layers)
+            out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}__{layers_slug}__{run_tag}.parquet"
             df.to_parquet(out_path, index=False)
             print(f"[{concept}] wrote {len(df)} candidate features to {out_path}")
 

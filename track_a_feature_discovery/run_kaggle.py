@@ -64,7 +64,7 @@ from reductions import (  # noqa: E402
     REDUCED_CONCEPTS,
     VOCABPROJ_MINMATCH,
 )
-from discover import cascade_filter_candidates, get_concept_data, load_cvs  # noqa: E402
+from discover import build_layers_slug, cascade_filter_candidates, get_concept_data, load_cvs  # noqa: E402
 
 ARTIFACTS_DIR = ROOT / "artifacts" / "features"
 _RUN_START = time.monotonic()
@@ -385,7 +385,10 @@ def main():
             debug_log_noop_edits=args.debug_log_noop_edits,
         )
 
-    out_path = ARTIFACTS_DIR / f"{concept_slug}.parquet"
+    # layer-scoped filename for the same reason checkpoint_dir is -- running
+    # this concept at a different --layers selection would otherwise
+    # silently overwrite the previous run's output.
+    out_path = ARTIFACTS_DIR / f"{concept_slug}__{build_layers_slug(layers)}__reduced.parquet"
     df.to_parquet(out_path, index=False)
     log(f"wrote {len(df)} candidate features to {out_path}")
     log_disk_usage("finish")
