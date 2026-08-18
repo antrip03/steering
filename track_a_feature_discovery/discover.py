@@ -209,7 +209,15 @@ def discover_concept(
     signs = get_mlp_act_signs(model, seed_tokens, forget_text.splitlines()[:1000])
 
     concept_slug = concept.lower().replace(" ", "_")
-    checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug
+    # Layer-scoped, not just concept-scoped: checkpoints (feature_effect.ckpt,
+    # feature_activations.ckpt, mmlu.ckpt) resume by next-batch-index and
+    # per-(layer,id) result dicts. A stale checkpoint from a DIFFERENT layer
+    # selection for the same concept would silently make a new run skip
+    # batches it never actually measured for its own candidates -- corrupting
+    # results rather than crashing. Real risk, not hypothetical: this project
+    # has already run Golf at layer 1 and layer 6 in the same investigation.
+    layers_slug = "all_layers" if layers is None else "layers_" + "_".join(str(x) for x in sorted(layers))
+    checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug / layers_slug
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     effect_candidates = candidates

@@ -341,7 +341,13 @@ def main():
     concept_data = get_concept_data(cvs, args.concept)
 
     concept_slug = args.concept.lower().replace(" ", "_")
-    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else (ROOT / "artifacts" / "checkpoints" / concept_slug)
+    # Layer-scoped by default, not just concept-scoped -- see discover.py's
+    # identical comment: a stale checkpoint from a different --layers
+    # selection for the same concept would silently make a new run skip
+    # batches it never measured for its own candidates. Only applied to the
+    # default path; an explicit --checkpoint-dir is the caller's own choice.
+    layers_slug = "layers_" + "_".join(str(x) for x in sorted(layers))
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else (ROOT / "artifacts" / "checkpoints" / concept_slug / layers_slug)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log(f"checkpoint_dir={checkpoint_dir}")
     if args.checkpoint_dir is None:
