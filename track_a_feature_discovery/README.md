@@ -68,11 +68,24 @@ Steps 5–7 call `pisces_ref/feature_finder.py`'s `search_features`,
   (steps 3–4) as clearly documented, named functions — not inlined magic
   numbers. See "Open design decisions" below.
 - `discover.py` — orchestration entrypoint: for each concept, runs steps
-  1–7 and writes `artifacts/features/<concept>.parquet` with **every
-  candidate considered** (needed for Track B's filter pull-in-rate metric),
-  each row matching `schema.FeatureRecord`.
-- `test_vocab_projection.py`, `test_seed_tokens.py` — unit tests, both run
-  without a GPU, a real SAE, or a downloaded tokenizer (see "Testing" below).
+  1–7 and writes `artifacts/features/<concept>__<layers>__<tag>.parquet`
+  (filename encodes the run's settings — see `build_run_tag`/
+  `build_layers_slug` — so different configurations for the same concept
+  never collide) with **every candidate considered** (needed for Track B's
+  filter pull-in-rate metric), each row matching `schema.FeatureRecord`.
+- `hub_storage.py` — push/pull run outputs to/from a private HF Dataset
+  repo (`antrip03/pisces-track-a-runs`), since `artifacts/` is gitignored
+  and Kaggle sessions are ephemeral. `--push-to-hub` on `discover.py`/
+  `run_kaggle.py` uploads after writing locally; `compare_fc.py --from-hub`
+  pulls both sides of a comparison directly, so it can run from any machine
+  with an HF token, not just wherever the files happen to be downloaded.
+- `compare_fc.py` — diffs two runs' selected feature sets (Step 2.5
+  validation): candidate-pool membership, exact-match rate, and effect
+  scores for anything that differs. Reads local paths by default, or hub
+  filenames with `--from-hub`.
+- `test_vocab_projection.py`, `test_seed_tokens.py`, `test_hub_storage.py`,
+  `test_compare_fc.py`, `test_discover.py`, `test_reductions.py` — unit
+  tests, all run without a GPU or a real SAE (see "Testing" below).
 
 ## Open design decisions
 
