@@ -665,13 +665,46 @@ contribution.
 specifically — skips the cascade prefilter entirely, sending all 69
 candidates straight to the reduced-corpus measurement. Tests whether the
 ~9-candidate group persists on its own, without cascade also in the
-picture:
+picture. Not yet run.
 
-```
-python discover.py --concept Golf --layers 1 --reduced --disable-cascade --debug-log-noop-edits
-```
+**Superseded by the decision below**: the corpus-size reduction this test
+was designed to isolate from cascade has itself been dropped (see the next
+section) — with it gone, `--reduced --disable-cascade` is now essentially
+just original settings plus early-exit (provably lossless), so it's no
+longer a meaningful isolation test, mainly a sanity check that early-exit
+really is lossless. The more useful test going forward is a plain
+`--reduced` run (cascade + early-exit only, full corpus) against the
+Golf/layer-1 original baseline — that now isolates cascade's own effect on
+the FC cleanly, which the original 30/69-match result couldn't, since the
+corpus reduction was confounded with it at the time.
 
-Not yet run.
+### Corpus-size reduction dropped — back to full batches
+
+Discussed the actual point of `EFFECT_MEASUREMENT_BATCHES` (why it existed:
+the real production job is 6 concepts × `MIDDLE_LAYERS`, and candidates
+scale with how many layers are searched — running all 10 middle layers
+together for one concept could mean 700-900+ candidates, and at 85 batches
+that's plausibly 10+ hours for effect measurement alone, for one concept).
+Weighed against the determinism-check finding above (the divergence is
+real, not noise) and decided: correctness over speed. **Dropped** —
+`EFFECT_MEASUREMENT_BATCHES` is no longer applied by `--reduced` in either
+`discover.py` or `run_kaggle.py`; effect measurement always runs on the
+full `wikipedia_content` corpus now, `--reduced` or not. Early-exit stays
+(provably exact — free speedup, no accuracy cost, unlike the corpus
+reduction was). The original 12-hour-Kaggle-session problem this was meant
+to solve should be handled by spreading the full job across multiple
+sessions via the checkpoint/resume already built into `get_feature_effect`
+and `filter_features_by_mmlu`, not by measuring less data.
+
+`EFFECT_MEASUREMENT_BATCHES=20` is kept in `reductions.py` as a documented,
+unused-by-default historical value, in case a less-aggressive reduction
+(e.g. 40 batches) is worth revisiting later.
+
+**Next real test**: a plain `discover.py --concept Golf --layers 1 --reduced --debug-log-noop-edits`
+run (cascade + early-exit, full corpus this time) diffed against
+`golf_original.parquet` — this now cleanly isolates cascade's own
+contribution to the earlier divergence, without the corpus reduction
+confounding it. Not yet run.
 
 ## Requirements
 
