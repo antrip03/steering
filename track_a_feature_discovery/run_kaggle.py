@@ -334,6 +334,18 @@ def main():
             "three were wired -- see track_a_feature_discovery/README.md."
         ),
     )
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help=(
+            "Upload the output parquet to the private HF Dataset repo "
+            "hub_storage.HF_REPO_ID after writing it locally -- see discover.py's "
+            "identical flag. Especially relevant here since Kaggle sessions are "
+            "ephemeral: without this, the only copy of a real run's output lives in "
+            "that specific Kaggle Version's Output tab. Requires an HF token with "
+            "repo.write scope for that repo's namespace."
+        ),
+    )
     args = parser.parse_args()
 
     layers = args.layers if args.layers is not None else MIDDLE_LAYERS
@@ -391,6 +403,12 @@ def main():
     out_path = ARTIFACTS_DIR / f"{concept_slug}__{build_layers_slug(layers)}__reduced.parquet"
     df.to_parquet(out_path, index=False)
     log(f"wrote {len(df)} candidate features to {out_path}")
+
+    if args.push_to_hub:
+        from hub_storage import push_run_output
+        url = push_run_output(out_path)
+        log(f"pushed to {url}")
+
     log_disk_usage("finish")
     log_gpu_memory("finish")
 

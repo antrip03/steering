@@ -364,6 +364,20 @@ def main():
             "reductions.py / README.md's Step 2.5 writeup for the full context."
         ),
     )
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help=(
+            "Upload each concept's output parquet to the private HF Dataset repo "
+            "hub_storage.HF_REPO_ID after writing it locally. artifacts/ is gitignored "
+            "(generated data doesn't belong in the git repo), and every real comparison "
+            "in this project's validation history so far needed a file manually "
+            "downloaded from Kaggle's UI and kept track of locally -- this gives it a "
+            "durable, shared home instead. Requires an HF token with repo.write scope "
+            "for that repo's namespace, resolved the same way as everywhere else in "
+            "this project (HF_TOKEN env var, then huggingface_hub's cached login)."
+        ),
+    )
     args = parser.parse_args()
 
     if args.reduced:
@@ -438,6 +452,11 @@ def main():
             out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}__{layers_slug}__{run_tag}.parquet"
             df.to_parquet(out_path, index=False)
             print(f"[{concept}] wrote {len(df)} candidate features to {out_path}")
+
+            if args.push_to_hub:
+                from hub_storage import push_run_output
+                url = push_run_output(out_path)
+                print(f"[{concept}] pushed to {url}")
 
 
 if __name__ == "__main__":
