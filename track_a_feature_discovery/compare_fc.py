@@ -4,6 +4,10 @@ settings discover.py run and a --reduced run for the same concept.
 
 python compare_fc.py --original golf_original.parquet --reduced golf_reduced.parquet
 
+Or, if both runs were uploaded with --push-to-hub (see hub_storage.py):
+
+python compare_fc.py --from-hub --original golf__layers_6__original.parquet --reduced golf__layers_6__reduced.parquet
+
 Reports exact matches, features that differ in selection status, and effect
 scores for the differing ones -- per the task's own instruction ("report
 exact matches, any differing features, intermediate effect scores for
@@ -13,6 +17,8 @@ keeping the reduction"), not just a pass/fail verdict.
 from __future__ import annotations
 
 import argparse
+import tempfile
+from pathlib import Path
 
 import pandas as pd
 
@@ -84,10 +90,27 @@ def compare(original_path: str, reduced_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--original", required=True, help="Path to the original-settings run's <concept>.parquet")
-    parser.add_argument("--reduced", required=True, help="Path to the --reduced run's <concept>.parquet")
+    parser.add_argument("--original", required=True, help="Path (or, with --from-hub, filename) of the original-settings run's parquet")
+    parser.add_argument("--reduced", required=True, help="Path (or, with --from-hub, filename) of the --reduced run's parquet")
+    parser.add_argument(
+        "--from-hub", action="store_true",
+        help="Treat --original/--reduced as filenames on hub_storage.HF_REPO_ID (as uploaded by "
+             "--push-to-hub) rather than local paths, and pull them first. Lets a comparison run "
+             "on any machine with network access and an HF token, not just wherever the files "
+             "happen to be downloaded to.",
+    )
     args = parser.parse_args()
-    compare(args.original, args.reduced)
+
+    if args.from_hub:
+        from hub_storage import pull_run_output
+        tmpdir = Path(tempfile.mkdtemp(prefix="compare_fc_"))
+        original_path = str(pull_run_output(args.original, tmpdir))
+        reduced_path = str(pull_run_output(args.reduced, tmpdir))
+    else:
+        original_path = args.original
+        reduced_path = args.reduced
+
+    compare(original_path, reduced_path)
 
 
 if __name__ == "__main__":
