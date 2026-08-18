@@ -136,6 +136,7 @@ def cascade_filter_candidates(
 def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
     reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
+    disable_cascade: bool = False,
 ) -> pd.DataFrame:
     """reduced=True applies the remaining Step 2 runtime reductions together
     (see reductions.py for each one's rationale): cascade prefiltering, a
@@ -160,7 +161,19 @@ def discover_concept(
     re-test minmatch on a per-run basis (e.g. against a different concept)
     without needing another code change, after minmatch_sweep.py showed
     Golf's collapse was a hard cliff (92 candidates at 1, zero at every
-    value 2-5), not a gradual one."""
+    value 2-5), not a gradual one.
+
+    disable_cascade, if True (only meaningful with reduced=True), skips the
+    cascade prefilter step entirely -- ALL candidates go straight to the
+    reduced-corpus effect measurement, instead of only the top
+    CASCADE_KEEP_FRACTION by cascade's cheap heuristic score. Exists to
+    isolate the reduced effect-measurement corpus + early-exit from cascade
+    specifically: Golf/layer-1's --reduced run showed real divergence from
+    original settings (30/69 exact match), split between ~30 candidates
+    cascade dropped before measurement and ~9 where the reduced (20-batch)
+    corpus measured a genuinely different near-zero pos_effect than the
+    full 85-batch corpus. This flag answers whether the ~9-candidate group
+    persists on its own, without cascade also in the mix."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -197,11 +210,14 @@ def discover_concept(
     effect_text = forget_text
     early_exit_after_batches = None
     if reduced:
-        effect_candidates = cascade_filter_candidates(
-            model, candidates, forget_text, signs, seed_tokens, neg_toks,
-            CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION,
-            debug_log_noop_edits=debug_log_noop_edits,
-        )
+        if disable_cascade:
+            print(f"  cascade prefilter: SKIPPED (--disable-cascade) -- all {len(candidates)} candidates go to effect measurement")
+        else:
+            effect_candidates = cascade_filter_candidates(
+                model, candidates, forget_text, signs, seed_tokens, neg_toks,
+                CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION,
+                debug_log_noop_edits=debug_log_noop_edits,
+            )
         effect_lines = evenly_spaced_subsample_lines(forget_text.splitlines(), EFFECT_MEASUREMENT_BATCHES)
         effect_text = "\n".join(effect_lines)
         early_exit_after_batches = EARLY_EXIT_AFTER_BATCHES
@@ -296,6 +312,17 @@ def main():
             "per-run/per-concept basis without another code change."
         ),
     )
+    parser.add_argument(
+        "--disable-cascade",
+        action="store_true",
+        help=(
+            "Only meaningful with --reduced: skip the cascade prefilter step entirely "
+            "(all candidates go straight to the reduced-corpus effect measurement, "
+            "instead of only the top CASCADE_KEEP_FRACTION by cascade's heuristic "
+            "score). Isolates the reduced corpus + early-exit from cascade specifically "
+            "-- see reductions.py / README.md's Step 2.5 writeup for why this matters."
+        ),
+    )
     args = parser.parse_args()
 
     if args.reduced:
@@ -359,6 +386,7 @@ def main():
                 df = discover_concept(
                     model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced,
                     debug_log_noop_edits=args.debug_log_noop_edits, minmatch_override=args.minmatch,
+                    disable_cascade=args.disable_cascade,
                 )
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
