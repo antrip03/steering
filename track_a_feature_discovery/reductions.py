@@ -23,12 +23,27 @@ Verified against source, not assumed:
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# 2.1 -- corpus size for effect measurement (get_feature_effect)
+# 2.1 -- corpus size for effect measurement (get_feature_effect) -- DROPPED
 # ---------------------------------------------------------------------------
-# Original: unrestricted, i.e. every line of wikipedia_content in batches of 3
-# (~85 batches for Golf's 255-line article). Reduced: 20 representative
-# batches, evenly spaced through the corpus (not just the first 20), so the
-# measured effect reflects the whole article's content, not just its opening.
+# Tried EFFECT_MEASUREMENT_BATCHES=20 (evenly spaced through the corpus, not
+# just the first 20, so the measured effect reflects the whole article's
+# content, not just its opening). Real-run validation on Golf/layer-1
+# demonstrated this changes the selected FC, not just its speed: two
+# identical original-settings (85-batch) runs matched exactly (69/69), so
+# the divergence against the 20-batch --reduced run (30/69 exact match) is
+# real, not GPU noise. A meaningful chunk of that (~9 candidates) had
+# near-zero pos_effect that flipped sign purely because 20 evenly-spaced
+# batches measure a smaller, different sample than the full 85 -- a genuine
+# correctness cost, not a rounding error, for a project whose whole point is
+# getting the *right* feature set. Reverted: --reduced no longer shrinks the
+# corpus at all; effect measurement always runs on every line of
+# wikipedia_content, same as original settings. The 12-hour-Kaggle-session
+# problem this was meant to solve should be handled by spreading the full
+# job across multiple sessions via checkpointing (already built into
+# get_feature_effect/filter_features_by_mmlu), not by measuring less data.
+# EFFECT_MEASUREMENT_BATCHES kept below (unused by default) as a documented
+# historical value and a standing target for evenly_spaced_subsample_lines
+# if a less-aggressive reduction (e.g. 40 batches) is ever worth revisiting.
 EFFECT_MEASUREMENT_BATCHES = 20
 EFFECT_BATCH_SIZE = 3  # matches pisces_ref/feature_finder.py's own default
 

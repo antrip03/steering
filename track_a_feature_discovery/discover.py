@@ -61,7 +61,6 @@ from reductions import (  # noqa: E402
     CASCADE_PREFILTER_BATCHES,
     EARLY_EXIT_AFTER_BATCHES,
     EARLY_EXIT_MARGIN,
-    EFFECT_MEASUREMENT_BATCHES,
     MIDDLE_LAYERS,
     REDUCED_CONCEPTS,
     VOCABPROJ_MINMATCH,
@@ -88,7 +87,7 @@ def cascade_filter_candidates(
     batch_size=3, debug_log_noop_edits: bool = False,
 ):
     """Cheap pre-pass on a small (evenly-spaced) subset of batches, used to
-    drop the weakest half of candidates before the full (reduced) measurement
+    drop the weakest half of candidates before the full effect measurement
     runs on the survivors. Uses the same underlying get_feature_effect
     PISCES's own filter_features_by_effect_and_activations calls internally,
     just on fewer batches and without the final threshold decision.
@@ -138,17 +137,22 @@ def discover_concept(
     reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
     disable_cascade: bool = False,
 ) -> pd.DataFrame:
-    """reduced=True applies the remaining Step 2 runtime reductions together
-    (see reductions.py for each one's rationale): cascade prefiltering, a
-    reduced+evenly-spaced effect-measurement corpus, and early-exit.
-    VocabProj minmatch tightening was tried and dropped -- real-run
-    validation on Golf showed minmatch=5 collapses the candidate pool to
-    zero with no viable intermediate value (see reductions.py's
-    VOCABPROJ_MINMATCH comment and README.md's "Runtime reductions"
-    section), so VOCABPROJ_MINMATCH is back to 1 and --reduced no longer
-    changes it. reduced=False (default) preserves the exact original,
-    unrestricted behavior -- this flag exists specifically so the same
-    function can be called both ways for Step 2.5's validation diff.
+    """reduced=True currently applies cascade prefiltering and early-exit
+    (see reductions.py for each one's rationale). Two of the original four
+    Step 2 reductions have been tried and dropped after real-run validation
+    on Golf showed they change the selected FC, not just its speed: VocabProj
+    minmatch tightening (minmatch=5 collapsed the candidate pool to zero
+    with no viable intermediate value -- see reductions.py's
+    VOCABPROJ_MINMATCH comment), and the reduced+evenly-spaced
+    effect-measurement corpus (two identical 85-batch original-settings runs
+    matched exactly, proving the divergence against a 20-batch run was real,
+    not GPU noise -- see reductions.py's EFFECT_MEASUREMENT_BATCHES
+    comment). Early-exit stays because it's provably exact, not a guess --
+    see get_feature_effect's docstring. Cascade's own validation is still in
+    progress (see disable_cascade below and README.md's Step 2.5 writeup).
+    reduced=False (default) preserves the exact original, unrestricted
+    behavior -- this flag exists specifically so the same function can be
+    called both ways for Step 2.5's validation diff.
 
     debug_log_noop_edits=True (default False) enables pisces_ref/editor.py's
     replace_mlp_rows diagnostic instead of letting a no-op edit crash with
@@ -164,16 +168,18 @@ def discover_concept(
     value 2-5), not a gradual one.
 
     disable_cascade, if True (only meaningful with reduced=True), skips the
-    cascade prefilter step entirely -- ALL candidates go straight to the
-    reduced-corpus effect measurement, instead of only the top
-    CASCADE_KEEP_FRACTION by cascade's cheap heuristic score. Exists to
-    isolate the reduced effect-measurement corpus + early-exit from cascade
-    specifically: Golf/layer-1's --reduced run showed real divergence from
-    original settings (30/69 exact match), split between ~30 candidates
-    cascade dropped before measurement and ~9 where the reduced (20-batch)
-    corpus measured a genuinely different near-zero pos_effect than the
-    full 85-batch corpus. This flag answers whether the ~9-candidate group
-    persists on its own, without cascade also in the mix."""
+    cascade prefilter step entirely -- ALL candidates go straight to effect
+    measurement, instead of only the top CASCADE_KEEP_FRACTION by cascade's
+    cheap heuristic score. Originally built to isolate the (since-dropped)
+    reduced effect-measurement corpus from cascade specifically -- now that
+    the corpus reduction is gone, reduced=True + disable_cascade=True is
+    functionally just original settings plus early-exit (provably lossless),
+    so it should reproduce the original FC almost exactly and mainly serves
+    as a sanity check on that claim. The more informative test now that the
+    corpus confound is removed is a plain --reduced run (cascade +
+    early-exit, full corpus): it isolates cascade's own effect on the FC
+    cleanly, which the original 30/69-match result couldn't, since it had
+    both reductions active at once."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -218,11 +224,15 @@ def discover_concept(
                 CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION,
                 debug_log_noop_edits=debug_log_noop_edits,
             )
-        effect_lines = evenly_spaced_subsample_lines(forget_text.splitlines(), EFFECT_MEASUREMENT_BATCHES)
-        effect_text = "\n".join(effect_lines)
+        # Corpus-size reduction (EFFECT_MEASUREMENT_BATCHES) dropped -- see
+        # reductions.py's comment: real-run validation showed it changes the
+        # selected FC, not just its speed. effect_text stays the full
+        # forget_text regardless of `reduced`. early-exit stays on: it's
+        # provably exact (see get_feature_effect's docstring), so it's free
+        # speedup with no accuracy cost, unlike the corpus reduction was.
         early_exit_after_batches = EARLY_EXIT_AFTER_BATCHES
-        print(f"  effect measurement: {len(forget_text.splitlines())} -> {len(effect_lines)} lines "
-              f"({EFFECT_MEASUREMENT_BATCHES} evenly-spaced batches), early_exit_after_batches={early_exit_after_batches}")
+        print(f"  effect measurement: full corpus ({len(forget_text.splitlines())} lines, corpus reduction "
+              f"dropped), early_exit_after_batches={early_exit_after_batches}")
 
     effect_filtered, (pos_effects, neg_effects, activations) = filter_features_by_effect_and_activations(
         model, effect_candidates, effect_text, signs, seed_tokens, neg_toks, filter_by_act=True,
@@ -281,10 +291,12 @@ def main():
         action="store_true",
         help=(
             "Apply the remaining Step 2 runtime reductions (see reductions.py): "
-            "cascade prefiltering, reduced+evenly-spaced effect-measurement corpus, "
-            "early-exit. VocabProj minmatch tightening was tried and dropped after "
-            "real-run validation (see VOCABPROJ_MINMATCH's comment in reductions.py) "
-            "-- --reduced no longer changes it. Also changes the --concept "
+            "cascade prefiltering and early-exit. VocabProj minmatch tightening "
+            "and the reduced effect-measurement corpus were both tried and dropped "
+            "after real-run validation showed they change the selected FC, not "
+            "just its speed (see VOCABPROJ_MINMATCH / EFFECT_MEASUREMENT_BATCHES "
+            "comments in reductions.py) -- effect measurement always runs on the "
+            "full corpus now, --reduced or not. Also changes the --concept "
             "and --layers defaults (not overrides -- pass either explicitly to "
             "override) to REDUCED_CONCEPTS / MIDDLE_LAYERS. Omit for the exact "
             "original, unrestricted behavior."
@@ -317,10 +329,11 @@ def main():
         action="store_true",
         help=(
             "Only meaningful with --reduced: skip the cascade prefilter step entirely "
-            "(all candidates go straight to the reduced-corpus effect measurement, "
-            "instead of only the top CASCADE_KEEP_FRACTION by cascade's heuristic "
-            "score). Isolates the reduced corpus + early-exit from cascade specifically "
-            "-- see reductions.py / README.md's Step 2.5 writeup for why this matters."
+            "(all candidates go straight to effect measurement, instead of only the top "
+            "CASCADE_KEEP_FRACTION by cascade's heuristic score). With the corpus-size "
+            "reduction dropped, --reduced --disable-cascade is now essentially original "
+            "settings plus early-exit (provably lossless) -- mainly a sanity check. See "
+            "reductions.py / README.md's Step 2.5 writeup for the full context."
         ),
     )
     args = parser.parse_args()

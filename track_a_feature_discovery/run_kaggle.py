@@ -60,11 +60,9 @@ from reductions import (  # noqa: E402
     CASCADE_PREFILTER_BATCHES,
     EARLY_EXIT_AFTER_BATCHES,
     EARLY_EXIT_MARGIN,
-    EFFECT_MEASUREMENT_BATCHES,
     MIDDLE_LAYERS,
     REDUCED_CONCEPTS,
     VOCABPROJ_MINMATCH,
-    evenly_spaced_subsample_lines,
 )
 from discover import cascade_filter_candidates, get_concept_data, load_cvs  # noqa: E402
 
@@ -249,10 +247,16 @@ def discover_concept_kaggle(
         debug_log_noop_edits=debug_log_noop_edits,
     )
 
-    effect_lines = evenly_spaced_subsample_lines(forget_text.splitlines(), EFFECT_MEASUREMENT_BATCHES, batch_size=effect_batch_size)
-    effect_text = "\n".join(effect_lines)
-    log(f"effect measurement: {len(effect_candidates)} candidates x {len(effect_lines)} lines "
-        f"({EFFECT_MEASUREMENT_BATCHES} batches @ batch_size={effect_batch_size}), "
+    # Corpus-size reduction (EFFECT_MEASUREMENT_BATCHES) dropped -- see
+    # reductions.py's comment: real-run validation on Golf showed it changes
+    # the selected FC, not just its speed (two identical full-corpus runs
+    # matched exactly; a 20-batch run against the same baseline did not).
+    # effect_text is the full forget_text; 12-hour-session-cap pressure
+    # should be handled by this script's checkpoint/resume across sessions,
+    # not by measuring less data.
+    effect_text = forget_text
+    log(f"effect measurement: {len(effect_candidates)} candidates x full corpus "
+        f"({len(forget_text.splitlines())} lines, corpus reduction dropped), "
         f"early_exit_after_batches={EARLY_EXIT_AFTER_BATCHES}")
 
     effect_filtered, (pos_effects, neg_effects, activations) = filter_features_by_effect_and_activations(
