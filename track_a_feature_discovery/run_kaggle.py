@@ -56,15 +56,13 @@ from feature_finder import (  # noqa: E402
 from seed_tokens import derive_seed_tokens_for_concept, get_neg_toks  # noqa: E402
 from vocab_projection import build_all_layer_lookups  # noqa: E402
 from reductions import (  # noqa: E402
-    CASCADE_KEEP_FRACTION,
-    CASCADE_PREFILTER_BATCHES,
     EARLY_EXIT_AFTER_BATCHES,
     EARLY_EXIT_MARGIN,
     MIDDLE_LAYERS,
     REDUCED_CONCEPTS,
     VOCABPROJ_MINMATCH,
 )
-from discover import build_layers_slug, cascade_filter_candidates, get_concept_data, load_cvs  # noqa: E402
+from discover import build_layers_slug, get_concept_data, load_cvs  # noqa: E402
 
 ARTIFACTS_DIR = ROOT / "artifacts" / "features"
 _RUN_START = time.monotonic()
@@ -240,12 +238,13 @@ def discover_concept_kaggle(
     forget_text = concept_data["wikipedia_content"]
     signs = get_mlp_act_signs(model, seed_tokens, forget_text.splitlines()[:1000])
 
-    log(f"cascade prefilter ({CASCADE_PREFILTER_BATCHES} batches, keep_fraction={CASCADE_KEEP_FRACTION})...")
-    effect_candidates = cascade_filter_candidates(
-        model, candidates, forget_text, signs, seed_tokens, neg_toks,
-        CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION, batch_size=effect_batch_size,
-        debug_log_noop_edits=debug_log_noop_edits,
-    )
+    # Cascade prefiltering (CASCADE_PREFILTER_BATCHES/CASCADE_KEEP_FRACTION)
+    # dropped -- see reductions.py's comment: real-run validation at Golf's
+    # layer 6 found cascade's cheap 5-batch score rejected 46/92 candidates,
+    # of which 43 (93%) were actually selected=True under full measurement.
+    # ALL candidates go straight to effect measurement now, same as
+    # discover.py's default.
+    effect_candidates = candidates
 
     # Corpus-size reduction (EFFECT_MEASUREMENT_BATCHES) dropped -- see
     # reductions.py's comment: real-run validation on Golf showed it changes

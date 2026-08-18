@@ -82,18 +82,23 @@ def get_concept_data(cvs: list[dict], concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
-def build_run_tag(reduced: bool, minmatch_override: int | None, disable_cascade: bool) -> str:
+def build_run_tag(reduced: bool, minmatch_override: int | None, enable_cascade: bool) -> str:
     """Encodes the settings that actually change discover_concept's output
     into a filesystem-safe tag, so different configurations for the same
     concept/layers never collide on the same output filename. Previously
     out_path was concept-only (f"{concept}.parquet"), so running original
-    settings then --reduced then --disable-cascade for the same concept
+    settings then --reduced then --enable-cascade for the same concept
     silently overwrote the same file each time -- every real comparison in
     this investigation needed the file downloaded and manually renamed
-    before the next run, an easy step to forget."""
+    before the next run, an easy step to forget.
+
+    enable_cascade defaults to (and usually is) False -- cascade prefiltering
+    was dropped after real-run validation (see reductions.py), so "reduced"
+    alone now means early-exit only. The "_cascade" suffix marks the opt-in
+    exception, not the common case."""
     tag = "reduced" if reduced else "original"
-    if reduced and disable_cascade:
-        tag += "_nocascade"
+    if reduced and enable_cascade:
+        tag += "_cascade"
     if minmatch_override is not None:
         tag += f"_minmatch{minmatch_override}"
     return tag
@@ -156,24 +161,29 @@ def cascade_filter_candidates(
 def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
     reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
-    disable_cascade: bool = False,
+    enable_cascade: bool = False,
 ) -> pd.DataFrame:
-    """reduced=True currently applies cascade prefiltering and early-exit
-    (see reductions.py for each one's rationale). Two of the original four
-    Step 2 reductions have been tried and dropped after real-run validation
-    on Golf showed they change the selected FC, not just its speed: VocabProj
-    minmatch tightening (minmatch=5 collapsed the candidate pool to zero
-    with no viable intermediate value -- see reductions.py's
-    VOCABPROJ_MINMATCH comment), and the reduced+evenly-spaced
-    effect-measurement corpus (two identical 85-batch original-settings runs
-    matched exactly, proving the divergence against a 20-batch run was real,
-    not GPU noise -- see reductions.py's EFFECT_MEASUREMENT_BATCHES
-    comment). Early-exit stays because it's provably exact, not a guess --
-    see get_feature_effect's docstring. Cascade's own validation is still in
-    progress (see disable_cascade below and README.md's Step 2.5 writeup).
-    reduced=False (default) preserves the exact original, unrestricted
-    behavior -- this flag exists specifically so the same function can be
-    called both ways for Step 2.5's validation diff.
+    """reduced=True currently applies only early-exit (see reductions.py).
+    All three of the original heuristic Step 2 reductions have now been
+    tried and dropped after real-run validation on Golf showed each one
+    changes the selected FC, not just its speed:
+    - VocabProj minmatch tightening: minmatch=5 collapsed the candidate pool
+      to zero with no viable intermediate value (layers 1 and 6 both) -- see
+      reductions.py's VOCABPROJ_MINMATCH comment.
+    - The reduced+evenly-spaced effect-measurement corpus: two identical
+      85-batch original-settings runs matched exactly, proving the
+      divergence against a 20-batch run was real, not GPU noise -- see
+      reductions.py's EFFECT_MEASUREMENT_BATCHES comment.
+    - Cascade prefiltering: tested at layer 6 (a real MIDDLE_LAYERS layer,
+      with the above two already dropped so this isolated cascade cleanly)
+      -- of the 46/92 candidates its 5-batch score rejected, 43 (93%) were
+      selected=True under full measurement. Worse than a coin flip would
+      misclassify -- see reductions.py's CASCADE_PREFILTER_BATCHES comment.
+    Early-exit stays because it's provably exact, not a guess -- see
+    get_feature_effect's docstring. reduced=False (default) preserves the
+    exact original, unrestricted behavior -- this flag exists specifically
+    so the same function can be called both ways for Step 2.5's validation
+    diff.
 
     debug_log_noop_edits=True (default False) enables pisces_ref/editor.py's
     replace_mlp_rows diagnostic instead of letting a no-op edit crash with
@@ -188,19 +198,11 @@ def discover_concept(
     Golf's collapse was a hard cliff (92 candidates at 1, zero at every
     value 2-5), not a gradual one.
 
-    disable_cascade, if True (only meaningful with reduced=True), skips the
-    cascade prefilter step entirely -- ALL candidates go straight to effect
-    measurement, instead of only the top CASCADE_KEEP_FRACTION by cascade's
-    cheap heuristic score. Originally built to isolate the (since-dropped)
-    reduced effect-measurement corpus from cascade specifically -- now that
-    the corpus reduction is gone, reduced=True + disable_cascade=True is
-    functionally just original settings plus early-exit (provably lossless),
-    so it should reproduce the original FC almost exactly and mainly serves
-    as a sanity check on that claim. The more informative test now that the
-    corpus confound is removed is a plain --reduced run (cascade +
-    early-exit, full corpus): it isolates cascade's own effect on the FC
-    cleanly, which the original 30/69-match result couldn't, since it had
-    both reductions active at once."""
+    enable_cascade, if True (only meaningful with reduced=True), opts back
+    into the cascade prefilter step that's off by default now (see above) --
+    kept as a standing way to re-test cascade against a different
+    concept/layer without another code change, same pattern as
+    minmatch_override."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -244,14 +246,15 @@ def discover_concept(
     effect_text = forget_text
     early_exit_after_batches = None
     if reduced:
-        if disable_cascade:
-            print(f"  cascade prefilter: SKIPPED (--disable-cascade) -- all {len(candidates)} candidates go to effect measurement")
-        else:
+        if enable_cascade:
             effect_candidates = cascade_filter_candidates(
                 model, candidates, forget_text, signs, seed_tokens, neg_toks,
                 CASCADE_PREFILTER_BATCHES, CASCADE_KEEP_FRACTION,
                 debug_log_noop_edits=debug_log_noop_edits,
             )
+        else:
+            print(f"  cascade prefilter: SKIPPED (dropped by default -- see reductions.py; pass "
+                  f"--enable-cascade to opt back in) -- all {len(candidates)} candidates go to effect measurement")
         # Corpus-size reduction (EFFECT_MEASUREMENT_BATCHES) dropped -- see
         # reductions.py's comment: real-run validation showed it changes the
         # selected FC, not just its speed. effect_text stays the full
@@ -318,13 +321,14 @@ def main():
         "--reduced",
         action="store_true",
         help=(
-            "Apply the remaining Step 2 runtime reductions (see reductions.py): "
-            "cascade prefiltering and early-exit. VocabProj minmatch tightening "
-            "and the reduced effect-measurement corpus were both tried and dropped "
-            "after real-run validation showed they change the selected FC, not "
-            "just its speed (see VOCABPROJ_MINMATCH / EFFECT_MEASUREMENT_BATCHES "
-            "comments in reductions.py) -- effect measurement always runs on the "
-            "full corpus now, --reduced or not. Also changes the --concept "
+            "Apply the one remaining Step 2 runtime reduction (see reductions.py): "
+            "early-exit. VocabProj minmatch tightening, the reduced "
+            "effect-measurement corpus, and cascade prefiltering were all tried and "
+            "dropped after real-run validation showed each one changes the selected "
+            "FC, not just its speed (see VOCABPROJ_MINMATCH / "
+            "EFFECT_MEASUREMENT_BATCHES / CASCADE_PREFILTER_BATCHES comments in "
+            "reductions.py) -- effect measurement always runs on the full corpus, "
+            "unfiltered by cascade, now. Also changes the --concept "
             "and --layers defaults (not overrides -- pass either explicitly to "
             "override) to REDUCED_CONCEPTS / MIDDLE_LAYERS. Omit for the exact "
             "original, unrestricted behavior."
@@ -353,15 +357,15 @@ def main():
         ),
     )
     parser.add_argument(
-        "--disable-cascade",
+        "--enable-cascade",
         action="store_true",
         help=(
-            "Only meaningful with --reduced: skip the cascade prefilter step entirely "
-            "(all candidates go straight to effect measurement, instead of only the top "
-            "CASCADE_KEEP_FRACTION by cascade's heuristic score). With the corpus-size "
-            "reduction dropped, --reduced --disable-cascade is now essentially original "
-            "settings plus early-exit (provably lossless) -- mainly a sanity check. See "
-            "reductions.py / README.md's Step 2.5 writeup for the full context."
+            "Only meaningful with --reduced: opt back into the cascade prefilter step, "
+            "which is OFF by default now -- real-run validation at Golf/layer 6 found "
+            "cascade's cheap 5-batch score rejected 46/92 candidates, of which 43 (93%%) "
+            "were actually selected=True under full measurement. Kept as a standing way "
+            "to re-test cascade against a different concept/layer, not because it's "
+            "recommended. See reductions.py / README.md's Step 2.5 writeup."
         ),
     )
     parser.add_argument(
@@ -441,13 +445,13 @@ def main():
                 df = discover_concept(
                     model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced,
                     debug_log_noop_edits=args.debug_log_noop_edits, minmatch_override=args.minmatch,
-                    disable_cascade=args.disable_cascade,
+                    enable_cascade=args.enable_cascade,
                 )
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
                 continue
 
-            run_tag = build_run_tag(args.reduced, args.minmatch, args.disable_cascade)
+            run_tag = build_run_tag(args.reduced, args.minmatch, args.enable_cascade)
             layers_slug = build_layers_slug(layers)
             out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}__{layers_slug}__{run_tag}.parquet"
             df.to_parquet(out_path, index=False)

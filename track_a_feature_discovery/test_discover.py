@@ -72,7 +72,7 @@ def test_cascade_filter_candidates_forwards_debug_log_noop_edits(monkeypatch):
 
 def test_build_run_tag_distinguishes_every_configuration():
     """Every real run in this investigation so far has been a distinct
-    configuration -- original, --reduced, --reduced --disable-cascade,
+    configuration -- original, --reduced, --reduced --enable-cascade,
     --minmatch N (with or without --reduced) -- and out_path used to be
     concept-only, so every one of these silently overwrote the same file.
     This is the fix: each combination must produce a different tag."""
@@ -85,16 +85,16 @@ def test_build_run_tag_distinguishes_every_configuration():
         (True, 1, False),
         (True, 1, True),
     ]
-    for reduced, minmatch, disable_cascade in configs:
-        tag = discover.build_run_tag(reduced, minmatch, disable_cascade)
-        assert tag not in seen, f"collision: {(reduced, minmatch, disable_cascade)} produced a tag already used: {tag}"
+    for reduced, minmatch, enable_cascade in configs:
+        tag = discover.build_run_tag(reduced, minmatch, enable_cascade)
+        assert tag not in seen, f"collision: {(reduced, minmatch, enable_cascade)} produced a tag already used: {tag}"
         seen.add(tag)
 
     assert discover.build_run_tag(False, None, False) == "original"
     assert discover.build_run_tag(True, None, False) == "reduced"
-    assert discover.build_run_tag(True, None, True) == "reduced_nocascade"
+    assert discover.build_run_tag(True, None, True) == "reduced_cascade"
     assert discover.build_run_tag(True, 5, False) == "reduced_minmatch5"
-    # disable_cascade only matters with reduced=True -- must not leak into the original tag
+    # enable_cascade only matters with reduced=True -- must not leak into the original tag
     assert discover.build_run_tag(False, None, True) == "original"
 
 

@@ -211,12 +211,14 @@ summary:
    candidates at `minmatch=1`, zero at every value from 2 to 5 — a hard
    cliff). `VOCABPROJ_MINMATCH` is back to 1 in `reductions.py`; `--minmatch`
    remains available on `discover.py` to re-test this per-run without
-   another code change. `--reduced` also runs a cheap
+   another code change. `--reduced` used to also run a cheap
    `CASCADE_PREFILTER_BATCHES`-batch pre-pass (`cascade_filter_candidates`)
    that drops the bottom `1 - CASCADE_KEEP_FRACTION` of candidates by a
-   pos/neg-effect heuristic score before the full (already-reduced)
-   measurement — this one is a **heuristic**, not provably exact, unlike
-   the early-exit below. Also enables `early_exit_after_batches`
+   pos/neg-effect heuristic score before the full measurement — this one was
+   a **heuristic**, not provably exact, unlike the early-exit below, and it
+   also failed real-run validation (see "Cascade filtering tested at a real
+   middle layer" below) — **dropped**, off by default now, available via
+   `--enable-cascade` to re-test elsewhere. Also enables `early_exit_after_batches`
    (`pisces_ref/feature_finder.py::get_feature_effect`, `steering-fixes`
    fork branch): a provably-safe short-circuit that stops evaluating a
    candidate once its remaining batches mathematically cannot change the
@@ -713,11 +715,64 @@ and `filter_features_by_mmlu`, not by measuring less data.
 unused-by-default historical value, in case a less-aggressive reduction
 (e.g. 40 batches) is worth revisiting later.
 
-**Next real test**: a plain `discover.py --concept Golf --layers 1 --reduced --debug-log-noop-edits`
-run (cascade + early-exit, full corpus this time) diffed against
-`golf_original.parquet` — this now cleanly isolates cascade's own
-contribution to the earlier divergence, without the corpus reduction
-confounding it. Not yet run.
+### Cascade filtering tested at a real middle layer — also dropped
+
+The earlier layer-1 cascade data (30/69 exact match) was confounded with the
+corpus-size reduction *and* wasn't at a `MIDDLE_LAYERS` layer anyway, so it
+never actually validated cascade for the layers the production job would
+use. Ran the clean version instead, at Golf/layer 6, with both other
+reductions already dropped:
+
+```
+python discover.py --concept Golf --layers 6 --debug-log-noop-edits --push-to-hub
+python discover.py --concept Golf --layers 6 --reduced --debug-log-noop-edits --push-to-hub
+```
+
+(`--reduced` here meant cascade + early-exit only, full corpus — the
+corpus-size and minmatch reductions were already gone by this point.) Both
+outputs pushed to the HF hub (`hub_storage.py`) and compared with
+`compare_fc.py --from-hub`:
+
+```
+Candidate pool: original=92  reduced=92  common=92
+selected=True in original: 81   selected=True in reduced: 38
+exact selection-status matches: 49/92
+43 candidate(s) DIFFER in selection status
+```
+
+Every one of the 43 differences went the same direction: `selected=True` in
+`original` → `selected=False` in `reduced`, with `effect_score=nan` on the
+`reduced` side. That `nan` is the tell — `discover_concept` writes one row
+per VocabProj candidate regardless of whether it survived cascade
+(`discover.py`'s row-building loop iterates `candidates`, not
+`effect_candidates`), so a candidate cascade rejected gets `effect_score=None`
+(→ `nan` in the parquet) and `selected=False` by construction, never having
+reached real measurement. Traced it directly: cascade's 5-batch score
+rejected 46/92 candidates (`keep_fraction=0.5`), and of those 46, **43 (93%)**
+were `selected=True` under the original run's full measurement. The other 46
+(cascade's survivors) matched the original exactly — 38/46 selected in both
+— confirming the *only* source of divergence is the prefilter's own
+rejection decision, not measurement noise or nondeterminism.
+
+93% false-negative rate among cascade's rejects is worse than a coin flip
+would misclassify — the cheap 5-batch score is essentially uncorrelated with
+(if anything, anti-correlated with) the real full-corpus outcome at this
+layer. **Dropped**, same call as the other two: `--reduced` no longer
+applies cascade prefiltering by default in `discover.py`, and `run_kaggle.py`
+no longer applies it at all. `CASCADE_PREFILTER_BATCHES`/
+`CASCADE_KEEP_FRACTION` are kept in `reductions.py` as documented, unused
+values; `discover.py` gained `--enable-cascade` (opt-in, off by default,
+same pattern as `--minmatch`) as a standing way to re-test cascade against a
+different concept/layer without another code change.
+
+**Net result**: all three of the original heuristic Step 2 reductions
+(minmatch tightening, corpus-size subsampling, cascade prefiltering) have
+now failed real-run validation on Golf and been dropped. Only early-exit
+(provably exact, not a heuristic) remains active under `--reduced`. This is
+worth being plain about rather than treating "we built runtime reductions"
+as itself progress: the actual finding of this validation phase is that the
+cheap versions of this pipeline don't preserve the real one's output, at
+least not for Golf at layers 1 and 6.
 
 ## Requirements
 

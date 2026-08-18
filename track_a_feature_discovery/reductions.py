@@ -15,6 +15,8 @@ Verified against source, not assumed:
   "intersection size > 4" exactly requires minmatch=5, not minmatch=4.
   DROPPED as a reduction after real-run validation -- see this constant's
   own comment below for what was found and why it's back to 1.
+- CASCADE_PREFILTER_BATCHES / CASCADE_KEEP_FRACTION: also DROPPED after
+  real-run validation at layer 6 -- see the comment below for the numbers.
 - MIDDLE_LAYERS (layers 3-12): NOT independently verified against EMBER's
   Figure 7 -- that paper wasn't available to check against (unlike PISCES's
   own alpha=4, which was verified directly from the PDF). Flagged here so
@@ -99,14 +101,24 @@ def evenly_spaced_subsample_lines(lines: list[str], n_batches: int, batch_size: 
 # like Homo Sapiens) without needing to change this default again.
 VOCABPROJ_MINMATCH = 1
 
-# Cascade filtering: a cheap pre-pass on a small subset of the (already
-# reduced) 20 batches, used to drop the bottom half of candidates by effect
-# score before running the full measurement. This is a heuristic speed-up
-# (unlike early-exit below, which is provably exact) -- it changes which
-# candidates get the full 20-batch treatment, so it's the one reduction in
-# this module that is NOT guaranteed bit-identical to the unreduced baseline.
-# Step 2.5's validation checks empirically whether it changes the final FC in
-# practice; if it does, don't silently keep it (see README).
+# ---------------------------------------------------------------------------
+# Cascade filtering -- DROPPED, kept at its original values for the record
+# ---------------------------------------------------------------------------
+# Cheap pre-pass on a small (5-batch) subset of the full corpus, meant to
+# drop the bottom half of candidates by a cheap effect score before running
+# the full measurement on the survivors. Unlike early-exit below (provably
+# exact), this is a heuristic -- Step 2.5 validated it empirically at Golf's
+# layer 6 (a real MIDDLE_LAYERS layer, with the corpus-size and minmatch
+# reductions already dropped, so this test isolated cascade's own effect
+# cleanly): of the 46/92 candidates (keep_fraction=0.5) cascade's 5-batch
+# score rejected, 43 (93%) turned out to be selected=True under full
+# measurement -- worse than a coin flip would misclassify. The cheap score is
+# essentially uncorrelated with the real outcome at this layer, not just
+# noisy. Dropped: discover_concept no longer applies cascade filtering under
+# --reduced by default. Kept available via --enable-cascade (opt-in, off by
+# default) as a standing way to re-test it against a different concept/layer
+# without another code change, same pattern as VOCABPROJ_MINMATCH's
+# --minmatch override above.
 CASCADE_PREFILTER_BATCHES = 5
 CASCADE_KEEP_FRACTION = 0.5
 
