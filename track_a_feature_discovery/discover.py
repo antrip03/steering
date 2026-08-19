@@ -70,8 +70,8 @@ from reductions import (  # noqa: E402
 ARTIFACTS_DIR = ROOT / "artifacts" / "features"
 
 
-def load_cvs() -> list[dict]:
-    with open(CVS_PATH, encoding="utf-8") as f:
+def load_cvs(cvs_path=CVS_PATH) -> list[dict]:
+    with open(cvs_path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -315,6 +315,18 @@ def main():
         dest="concepts",
         help="Concept name (repeatable). Defaults to all 15 natural concepts.",
     )
+    parser.add_argument(
+        "--cvs-path",
+        default=None,
+        help=(
+            "Override which concepts JSON to load (default: schema.CVS_PATH, this project's own "
+            "15 assigned concepts). Needed for the Harry Potter sanity check from this module's "
+            "docstring: 'Harry Potter' isn't one of this project's 15 concepts (swapped out for "
+            "Poison/Patriarchy/Homo Sapiens) -- it's only in PISCES's own original "
+            "pisces_ref/data/cvs.json, alongside Culture of Greece and Baseball, which also aren't "
+            "in this project's set. Pass pisces_ref/data/cvs.json explicitly to run that check."
+        ),
+    )
     parser.add_argument("--layers", type=int, nargs="*", default=None, help="Restrict to specific layers (faster iteration).")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
@@ -390,7 +402,7 @@ def main():
     else:
         concepts = args.concepts or NATURAL_CONCEPTS
         layers = args.layers
-    cvs = load_cvs()
+    cvs = load_cvs(args.cvs_path) if args.cvs_path else load_cvs()
 
     from sae_lens import HookedSAETransformer
 
