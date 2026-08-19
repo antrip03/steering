@@ -774,6 +774,53 @@ as itself progress: the actual finding of this validation phase is that the
 cheap versions of this pipeline don't preserve the real one's output, at
 least not for Golf at layers 1 and 6.
 
+### `run_kaggle.py`'s first real run — a sixth CUDA OOM, same root cause as the second
+
+First real-GPU test of `run_kaggle.py` (never previously run against actual
+hardware), doubling as the first non-Golf concept:
+
+```
+python run_kaggle.py --concept "Uranium" --layers 6 --debug-log-noop-edits --push-to-hub
+```
+
+Model/SAE loading, vocab-projection, and candidate search all worked
+correctly (checkpointed to `candidates.json` as designed). Uranium found
+only **14 candidates** at layer 6, vs. Golf's 92 — a large gap worth noting
+but not yet explained (one data point; could be a narrower concept
+genuinely having fewer overlapping SAE directions, or something about
+Uranium's TF-IDF seed tokens specifically).
+
+Then crashed 19/83 batches into `get_mlp_act_signs` (`pisces_ref/editor.py`)
+with a CUDA OOM: `14.54 GiB memory in use` of `14.56 GiB` total capacity —
+the exact same ceiling, to two decimal places, that `get_feature_activations`
+hit before its `names_filter` fix (see "A second, separate CUDA OOM" above).
+Same root cause, different call site: `model.run_with_cache(batch,
+return_type=None)` with no `names_filter` retains every hook point across
+the whole model (attention patterns, residual stream, every layer's MLP
+internals) for every batch, when this function only ever reads
+`blocks.{layer}.mlp.hook_post` for each layer. Crashing 19 batches in
+(not batch 1) is consistent with gradual accumulation across iterations
+rather than one single oversized allocation.
+
+Fixed the same way: `needed_hooks = {f"blocks.{layer}.mlp.hook_post" for
+layer in range(model.cfg.n_layers)}`, passed as `names_filter` to
+`run_with_cache`. Test added (`pisces_ref/test_editor.py`,
+`test_get_mlp_act_signs_names_filter_excludes_unread_hooks`) with a fake
+model that includes an unrelated hook (`blocks.0.attn.hook_pattern`) the
+function never reads, to verify the filter actually excludes it rather than
+just checking a filter callable was passed at all. Pushed to the fork
+(`steering-fixes`, commit `46c6759`) and the submodule pointer bumped here.
+
+**Not yet re-run** against real GPU after the fix — same command as above,
+picking up from the `candidates.json` checkpoint (candidate search doesn't
+need to redo). Worth treating with the same suspicion as the earlier no-op
+call sites: if it crashes again with a *different* traceback, that's a new
+unfiltered `run_with_cache`/`run_with_cache_with_saes` call site, not a sign
+this fix is wrong — `get_mlp_act_signs`, `get_feature_activations`, and
+`filter_features_by_mmlu`'s `evaluate_mmlu` call (via `unlearn_concept`'s
+own forward passes) are the three GPU-heavy paths identified so far; there
+could be others not yet exercised on a real 12+ hour multi-layer run.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub
