@@ -122,6 +122,55 @@ recoverable from `erasing_harry_potter.ipynb` (` Harry`, ` Potter`,
 ` Hermione`, ` Weasley`, ` Hogwarts`, ` Snape`, ` Malfoy`, ` Voldemort`) and
 can be compared against what `derive_seed_tokens_for_concept` produces.
 
+### VocabProj candidate quality — single coincidental token matches, not semantic clusters (open, unresolved)
+
+Discovered while eyeballing `run_kaggle.py`'s first real output (Uranium,
+layer 6) for face validity before trusting it: none of the 14 candidates'
+`top_tokens`/`bottom_tokens` (50 each, 100 slots total) looked
+uranium-related at a glance — mostly code identifiers (`ContentLoaded`,
+`MigrationBuilder`, `GEBURTSDATUM`), foreign-script fragments, and archaic
+long-s typography (`ſche`, `Anſ`). Checked systematically: every one of the
+14 candidates matched via **exactly one** of the 8 seed tokens
+(`' uranium'`, `' isotopes'`, `' reactor'`, `' isotope'`, `' plutonium'`,
+`' nuclear'`, `' fission'`, `' alpha'`) somewhere in its 100 slots — never
+two or more. Checked Golf/layer-6's 92 candidates the same way: **identical
+pattern, 92/92 at exactly one hit**, and 62 of those 92 (67%) were triggered
+by a single word, `' par'`, alone (` Tour` 11, ` hole` 10, ` golfer` 4,
+` golf` 3, ` tee` 1, ` Championship` 1 account for the rest).
+
+This means `search_features`'s `minmatch=1` threshold isn't finding
+features whose top/bottom-projected vocabulary clusters coherently around
+the concept — it's finding every feature with *any* single coincidental
+token overlap, on generic short words (`par`, `alpha`, `nuclear`) that
+plausibly appear in many unrelated features' projections just by chance,
+out of 16,384 SAE features × 100 slots each. Both concepts tested so far
+show the exact same shape (100% single-hit, no multi-hit candidates at
+all), so this isn't Golf-specific or Uranium-specific — it looks like a
+property of this project's TF-IDF-derived generic seed words against
+`minmatch=1`, consistent with (and a sharper version of) the hypothesis
+already noted in "Candidate reduction — DROPPED" above (PISCES's own
+hand-curated seed lists are tightly-clustered proper nouns that plausibly
+co-occur naturally within a feature's top-tokens; this project's shorter,
+more generic TF-IDF words don't).
+
+**What's NOT yet known**: whether this means the resulting `selected=True`
+sets (81/92 for Golf, 9/14 for Uranium — 88% and 64% of the already-loose
+candidate pool) are mostly spurious, or whether these coincidentally-matched
+features genuinely do have a measurable causal effect on concept-related
+behavior despite an uninterpretable vocab-projection profile (not unheard
+of in SAE interpretability, especially at middle layers with heavy
+superposition) -- the effect-measurement and MMLU stages that follow
+candidate search are a real, independent check, not a rubber stamp, and a
+high pass-through rate alone doesn't prove they're not discriminating.
+Distinguishing these requires actual causal validation (e.g. steering with
+a handful of `selected=True` features and checking output behavior changes
+in a concept-relevant way), not more vocab-projection analysis. **Flagging,
+not fixing** — this is a methodology question for the team, same as
+seed-token construction and `neg_toks` above, not something to silently
+patch by raising `minmatch` (already shown to collapse the pool to zero,
+see "Candidate reduction — DROPPED") or otherwise narrowing the search
+without discussion.
+
 ### `neg_toks` construction (`NEUTRAL_NEG_TOKENS` / `get_neg_toks`)
 
 Implemented as: a small, fixed set of high-frequency, semantically neutral
