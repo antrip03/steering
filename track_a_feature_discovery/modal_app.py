@@ -65,7 +65,13 @@ hf_cache_volume = modal.Volume.from_name("pisces-track-a-hf-cache", create_if_mi
 @app.function(
     image=image,
     gpu="A10G",
-    timeout=6 * 60 * 60,
+    # Bumped from 6h: single-layer runs (Golf/Uranium, ~85 batches) fit
+    # comfortably in 6h, but the full MIDDLE_LAYERS (10 layers) production
+    # scope multiplies candidate count roughly 10x per concept, and this
+    # project has no reliable timing calibration at that scale yet -- better
+    # to risk an over-generous timeout than have a legitimately-still-running
+    # job silently killed hours in.
+    timeout=24 * 60 * 60,
     secrets=[modal.Secret.from_name("huggingface")],
     volumes={
         "/root/steering/artifacts/checkpoints": checkpoints_volume,
