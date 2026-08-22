@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from schema import ConceptResultRow, NATURAL_CONCEPTS  # noqa: E402
+from schema import ConceptResultRow, NATURAL_CONCEPTS, feature_artifact_filename  # noqa: E402
 
 FEATURES_DIR = ROOT / "artifacts" / "features"
 
@@ -54,7 +54,7 @@ NEAR_DOMAIN_PAIRS = {
 
 
 def _load(concept: str) -> pd.DataFrame:
-    path = FEATURES_DIR / f"{concept.lower().replace(' ', '_')}.parquet"
+    path = FEATURES_DIR / feature_artifact_filename(concept)
     if not path.exists():
         raise FileNotFoundError(
             f"No Track A output for {concept!r} at {path}. "
@@ -96,7 +96,17 @@ def pullin_rate(concept: str) -> float:
 def token_overlap(concept: str) -> float:
     """Metric (c): Jaccard overlap between concept's selected-feature
     top/bottom tokens and its designated near-domain concept's selected-feature
-    top/bottom tokens (see NEAR_DOMAIN_PAIRS)."""
+    top/bottom tokens (see NEAR_DOMAIN_PAIRS).
+
+    Returns NaN (doesn't raise) if either side's Track A output is missing --
+    not just when NEAR_DOMAIN_PAIRS has no entry at all. Real risk, not
+    hypothetical: half of REDUCED_CONCEPTS' own near-domain pairs point
+    outside that 6-concept set (Golf -> Gambling, Poison -> Opioid,
+    Homo Sapiens -> Ancient Rome are not among the 6; only Uranium -> Gun,
+    Gun -> Mass Shooting, Mass Shooting -> Gun stay in-scope) -- a
+    compute_all() run scoped to just REDUCED_CONCEPTS would otherwise crash
+    on this metric for exactly the concepts whose pairing falls outside it,
+    rather than reporting NaN for the ones the current run doesn't cover."""
     near_domain = NEAR_DOMAIN_PAIRS.get(concept)
     if near_domain is None:
         return float("nan")
@@ -109,8 +119,11 @@ def token_overlap(concept: str) -> float:
             tokens.update(row.bottom_tokens)
         return tokens
 
-    tokens_a = token_set(_load(concept))
-    tokens_b = token_set(_load(near_domain))
+    try:
+        tokens_a = token_set(_load(concept))
+        tokens_b = token_set(_load(near_domain))
+    except FileNotFoundError:
+        return float("nan")
 
     if not tokens_a and not tokens_b:
         return float("nan")
@@ -123,7 +136,7 @@ def compute_all(concepts: list[str] | None = None) -> pd.DataFrame:
     using the mean pairwise cosine similarity against every other available
     concept for metric (a)."""
     concepts = concepts or NATURAL_CONCEPTS
-    available = [c for c in concepts if (FEATURES_DIR / f"{c.lower().replace(' ', '_')}.parquet").exists()]
+    available = [c for c in concepts if (FEATURES_DIR / feature_artifact_filename(c)).exists()]
 
     rows = []
     for concept in available:

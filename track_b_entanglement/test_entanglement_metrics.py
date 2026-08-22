@@ -59,3 +59,23 @@ def test_compute_all_skips_concepts_with_no_track_a_output(tmp_path, monkeypatch
     result = em.compute_all(FAKE_CONCEPTS + ["No Track A Output For This One"])
 
     assert set(result["concept"]) == set(FAKE_CONCEPTS)
+
+
+def test_token_overlap_returns_nan_not_crash_when_near_domain_missing(tmp_path, monkeypatch):
+    """Real risk, not hypothetical: half of REDUCED_CONCEPTS' own
+    NEAR_DOMAIN_PAIRS entries point outside that 6-concept production set
+    (Golf -> Gambling, Poison -> Opioid, Homo Sapiens -> Ancient Rome) -- a
+    real run scoped to just those 6 concepts hit exactly this: token_overlap
+    raised FileNotFoundError instead of returning NaN for the concept whose
+    pairing isn't in scope, crashing compute_all() entirely rather than
+    reporting NaN for the metrics that aren't computable with what's
+    actually been run."""
+    write_fake_features_dir(tmp_path)
+    monkeypatch.setattr(em, "FEATURES_DIR", tmp_path)
+    monkeypatch.setattr(em, "NEAR_DOMAIN_PAIRS", {FAKE_CONCEPTS[0]: "Some Concept Not In This Run"})
+
+    assert math.isnan(em.token_overlap(FAKE_CONCEPTS[0]))
+
+    # And compute_all() itself must not crash on this either.
+    result = em.compute_all([FAKE_CONCEPTS[0]])
+    assert math.isnan(result.iloc[0]["entanglement_token_overlap"])

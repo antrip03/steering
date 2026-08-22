@@ -25,7 +25,7 @@ for p in (ROOT, PISCES_REF):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from schema import CVS_PATH, ConceptResultRow, MODEL_NAME, NATURAL_CONCEPTS  # noqa: E402
+from schema import CVS_PATH, ConceptResultRow, MODEL_NAME, NATURAL_CONCEPTS, feature_artifact_filename  # noqa: E402
 from editor import Concept, Feature, get_mlp_act_signs, unlearn_concept  # noqa: E402
 from evals import (  # noqa: E402
     GeminiEvaluator,
@@ -61,7 +61,7 @@ def load_concept_data(concept: str) -> dict:
 
 
 def load_selected_features(concept: str) -> list[Feature]:
-    path = FEATURES_DIR / f"{concept.lower().replace(' ', '_')}.parquet"
+    path = FEATURES_DIR / feature_artifact_filename(concept)
     if not path.exists():
         raise FileNotFoundError(
             f"No Track A output for {concept!r} at {path}. "

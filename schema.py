@@ -50,10 +50,32 @@ NATURAL_CONCEPTS = [
 # Model is fixed to Gemma-2-2B-it for this phase.
 MODEL_NAME = "gemma-2-2b-it"
 
+# discover.py's output filename encodes the run's settings (build_run_tag /
+# build_layers_slug in track_a_feature_discovery/discover.py), added after a
+# real run showed different settings for the same concept silently
+# overwriting each other's output. The OFFICIAL, unrestricted production run
+# (no --reduced, no --layers restriction, no diagnostic flags) always
+# produces this exact suffix: build_layers_slug(None) == "all_layers" and
+# build_run_tag(reduced=False, minmatch_override=None, enable_cascade=False)
+# == "original". Track B (entanglement_metrics.py) and Track C
+# (run_erasure_eval.py) both need to find that one canonical file per
+# concept -- this is the single place that filename convention is defined,
+# so all three (plus tests/fixtures.py's synthetic data) can't silently
+# drift apart again the way they already did once (both tracks were still
+# looking for the pre-fix bare "<concept>.parquet" name until this was
+# caught by a real sanity check against actual discover.py output).
+CANONICAL_FEATURE_RUN_TAG = "all_layers__original"
+
+
+def feature_artifact_filename(concept: str) -> str:
+    return f"{concept.lower().replace(' ', '_')}__{CANONICAL_FEATURE_RUN_TAG}.parquet"
+
 
 @dataclass
 class FeatureRecord:
-    """One row of a per-concept feature-candidate parquet (artifacts/features/<concept>.parquet).
+    """One row of a per-concept feature-candidate parquet
+    (artifacts/features/<concept>__all_layers__original.parquet, see
+    feature_artifact_filename above).
 
     Contains every candidate feature considered for the concept, not just the
     final selected set (`selected=True` subset) -- the full candidate pool is

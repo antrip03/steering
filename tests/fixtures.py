@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from schema import ConceptResultRow, FeatureRecord  # noqa: E402
+from schema import ConceptResultRow, FeatureRecord, feature_artifact_filename  # noqa: E402
 
 FAKE_CONCEPTS = ["Fake Concept Alpha", "Fake Concept Beta", "Fake Concept Gamma"]
 
@@ -84,8 +84,9 @@ def make_concept_result_row(concept: str, efficacy: float, sim: float, mmlu: flo
 
 
 def write_fake_features_dir(dir_path: Path) -> None:
-    """Writes one `<concept>.parquet` per FAKE_CONCEPTS into dir_path, in the
-    same shape/naming convention Track A's discover.py uses. Alpha and Beta
+    """Writes one feature_artifact_filename(concept) parquet per FAKE_CONCEPTS
+    into dir_path, matching the exact naming convention Track A's discover.py
+    uses for the official (all-layers, original-settings) run. Alpha and Beta
     (index 0, 1) share one selected-feature token, so their (mutual, per
     NEAR_DOMAIN_PAIRS in the tests that use this) token_overlap is nonzero;
     Gamma (index 2) shares nothing with either, so its overlap is 0 -- keeps
@@ -96,7 +97,7 @@ def write_fake_features_dir(dir_path: Path) -> None:
     dir_path.mkdir(parents=True, exist_ok=True)
     for i, concept in enumerate(FAKE_CONCEPTS):
         df = pd.DataFrame(make_feature_records(concept, seed=i + 1, shared_token=shared_tokens[i]))
-        out = dir_path / f"{concept.lower().replace(' ', '_')}.parquet"
+        out = dir_path / feature_artifact_filename(concept)
         df.to_parquet(out, index=False)
 
 
