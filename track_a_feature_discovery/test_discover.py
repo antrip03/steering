@@ -10,6 +10,7 @@ approach for the equivalent filter_features_by_mmlu fix.
 """
 from __future__ import annotations
 
+import collections
 import sys
 import types
 
@@ -102,3 +103,57 @@ def test_build_layers_slug_is_stable_regardless_of_input_order():
     assert discover.build_layers_slug(None) == "all_layers"
     assert discover.build_layers_slug([6]) == "layers_6"
     assert discover.build_layers_slug([9, 3, 7]) == discover.build_layers_slug([3, 7, 9]) == "layers_3_7_9"
+
+
+def test_parse_feature_spec():
+    f = discover.parse_feature_spec("4:661:1")
+    assert (f.layer, f.id, f.neg) == (4, 661, True)
+    f = discover.parse_feature_spec("20:14668:0")
+    assert (f.layer, f.id, f.neg) == (20, 14668, False)
+
+
+def test_features_override_skips_search_and_infers_layers(monkeypatch):
+    """--features (e.g. to check whether the downstream filters would
+    promote a specific, already-known candidate confirmed present via
+    --candidates-only) must skip vocab-projection search entirely, and infer
+    which layers to build lookups for from the override list itself -- a
+    real Harry Potter run's --layers wouldn't necessarily match a
+    hand-picked feature's actual layer, and silently excluding it from
+    saes_by_layer/lls would KeyError deep in the row-building loop instead
+    of doing what was asked."""
+    def fail_search_features(*args, **kwargs):
+        raise AssertionError("search_features must not be called when features_override is given")
+    monkeypatch.setattr(discover, "search_features", fail_search_features)
+
+    captured = {}
+
+    class FakeLookup:
+        def __init__(self):
+            self.t = collections.defaultdict(lambda: ["tok_a", "tok_b"])
+            self.b = collections.defaultdict(lambda: ["tok_c", "tok_d"])
+
+    def fake_build_all_layer_lookups(model, model_name, layers=None, device="cuda", saes_out=None):
+        captured["layers"] = layers
+        lls = {}
+        for layer in layers:
+            lls[layer] = FakeLookup()
+            if saes_out is not None:
+                saes_out[layer] = object()
+        return lls
+
+    monkeypatch.setattr(discover, "build_all_layer_lookups", fake_build_all_layer_lookups)
+    monkeypatch.setattr(discover, "derive_seed_tokens_for_concept", lambda concept, cvs, is_single_token: [" golf"])
+    monkeypatch.setattr(discover, "get_neg_toks", lambda is_single_token: [" the"])
+
+    model = FakeModel()
+    cvs = [{"Concept": "Golf", "wikipedia_content": "irrelevant"}]
+    features = [Feature(layer=9, id=2, neg=True), Feature(layer=5, id=1, neg=False)]
+
+    df = discover.discover_concept(
+        model, cvs, "Golf", layers=[1, 2, 3],  # deliberately wrong/unrelated -- must be ignored
+        features_override=features, candidates_only=True,
+    )
+
+    assert captured["layers"] == [5, 9], "layers must be inferred (sorted) from features_override, not the passed-in layers="
+    assert len(df) == 2
+    assert set(zip(df.layer, df.feature_id, df.neg)) == {(9, 2, True), (5, 1, False)}

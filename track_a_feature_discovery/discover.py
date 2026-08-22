@@ -47,7 +47,7 @@ for p in (ROOT, PISCES_REF, Path(__file__).resolve().parent):
         sys.path.insert(0, str(p))
 
 from schema import CVS_PATH, FeatureRecord, MODEL_NAME, NATURAL_CONCEPTS  # noqa: E402
-from editor import get_mlp_act_signs  # noqa: E402
+from editor import Feature, get_mlp_act_signs  # noqa: E402
 from feature_finder import (  # noqa: E402
     filter_features_by_effect_and_activations,
     filter_features_by_mmlu,
@@ -80,6 +80,17 @@ def get_concept_data(cvs: list[dict], concept: str) -> dict:
         if row["Concept"] == concept:
             return row
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
+
+
+def parse_feature_spec(spec: str) -> Feature:
+    """Parses 'layer:id:neg' (neg as 1/0, e.g. '4:661:1') into a Feature.
+    Lets --features target the full effect+MMLU pipeline at a specific,
+    already-known handful of candidates -- e.g. to check whether the
+    downstream filters would actually promote a feature already confirmed
+    (via --candidates-only) to be present in the candidate pool, without
+    paying for the whole pool's worth of effect measurement."""
+    layer_s, id_s, neg_s = spec.split(":")
+    return Feature(layer=int(layer_s), id=int(id_s), neg=bool(int(neg_s)))
 
 
 def build_run_tag(reduced: bool, minmatch_override: int | None, enable_cascade: bool) -> str:
@@ -161,7 +172,8 @@ def cascade_filter_candidates(
 def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
     reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
-    enable_cascade: bool = False,
+    enable_cascade: bool = False, candidates_only: bool = False,
+    features_override: list[Feature] | None = None,
 ) -> pd.DataFrame:
     """reduced=True currently applies only early-exit (see reductions.py).
     All three of the original heuristic Step 2 reductions have now been
@@ -202,7 +214,26 @@ def discover_concept(
     into the cascade prefilter step that's off by default now (see above) --
     kept as a standing way to re-test cascade against a different
     concept/layer without another code change, same pattern as
-    minmatch_override."""
+    minmatch_override.
+
+    candidates_only, if True, returns right after candidate search -- no
+    effect measurement, no MMLU filtering. For a face-validity check (do
+    these candidates' top_tokens look concept-related?) on a concept with a
+    long article and/or many candidates, the full pipeline can be wildly
+    disproportionate to what's actually needed (see the candidates_only
+    branch below for real numbers from a Harry Potter run).
+
+    features_override, if given, skips vocab-projection search entirely and
+    runs the full effect+MMLU pipeline on exactly this list of Features --
+    e.g. a handful already confirmed present in the candidate pool via
+    --candidates-only, to check whether the downstream filters would
+    actually promote them to selected=True, without paying for the whole
+    pool's effect measurement (a real Harry Potter run: 277 candidates x
+    2494 batches was a ~24h ETA for a question a handful of candidates can
+    answer directly). `layers` is ignored when this is given -- the layers
+    actually needed are inferred from the override list itself, so a
+    mismatched --layers can't silently exclude one of the requested
+    features from saes_by_layer/lls."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -217,16 +248,47 @@ def discover_concept(
         )
     neg_toks = get_neg_toks(is_single_token)
 
+    if features_override is not None:
+        layers = sorted({f.layer for f in features_override})
+
     saes_by_layer: dict[int, object] = {}
     lls = build_all_layer_lookups(model, MODEL_NAME, layers=layers, device=device, saes_out=saes_by_layer)
 
-    if minmatch_override is not None:
-        minmatch = minmatch_override
+    if features_override is not None:
+        candidates = features_override
+        print(f"[{concept}] {len(candidates)} candidate features from --features override "
+              f"(skipping vocab-projection search): {candidates}")
     else:
-        minmatch = VOCABPROJ_MINMATCH if reduced else 1
-    candidates = search_features(model, lls, seed_tokens, minmatch=minmatch, layers=layers)
-    print(f"[{concept}] seed_tokens={seed_tokens} neg_toks={neg_toks} minmatch={minmatch}")
-    print(f"[{concept}] {len(candidates)} candidate features from vocab-projection search")
+        if minmatch_override is not None:
+            minmatch = minmatch_override
+        else:
+            minmatch = VOCABPROJ_MINMATCH if reduced else 1
+        candidates = search_features(model, lls, seed_tokens, minmatch=minmatch, layers=layers)
+        print(f"[{concept}] seed_tokens={seed_tokens} neg_toks={neg_toks} minmatch={minmatch}")
+        print(f"[{concept}] {len(candidates)} candidate features from vocab-projection search")
+
+    if candidates_only:
+        # Diagnostic short-circuit: candidate search is cheap (build the
+        # layer lookups + intersect against seed_tokens), but effect
+        # measurement is O(candidates x corpus_batches) forward passes --
+        # for a concept with a long article and/or many candidates (Harry
+        # Potter: 277 candidates x 2494 batches at ~35s/batch = a ~24h ETA,
+        # observed on a real run) that's wildly disproportionate to what a
+        # face-validity check (do these candidates' top_tokens look
+        # concept-related, or coincidental?) actually needs. Returns just
+        # identity + top/bottom_tokens -- no effect_score/selected, since
+        # nothing past this point ran.
+        rows = []
+        for feature in candidates:
+            ll = lls[feature.layer]
+            rows.append({
+                "layer": feature.layer,
+                "feature_id": feature.id,
+                "neg": feature.neg,
+                "top_tokens": ll.t[feature.id],
+                "bottom_tokens": ll.b[feature.id],
+            })
+        return pd.DataFrame(rows)
 
     forget_text = concept_data["wikipedia_content"]
     signs = get_mlp_act_signs(model, seed_tokens, forget_text.splitlines()[:1000])
@@ -381,6 +443,33 @@ def main():
         ),
     )
     parser.add_argument(
+        "--candidates-only",
+        action="store_true",
+        help=(
+            "Stop right after candidate search -- no effect measurement, no MMLU. "
+            "Effect measurement is O(candidates x corpus_batches) forward passes: on a "
+            "real run (Harry Potter, 277 candidates x 2494 batches) that was a ~24h ETA "
+            "just to check whether the candidates' top_tokens look concept-related. "
+            "This skips straight to that face-validity check. Output rows have "
+            "layer/feature_id/neg/top_tokens/bottom_tokens only -- no effect_score/selected."
+        ),
+    )
+    parser.add_argument(
+        "--features",
+        nargs="*",
+        default=None,
+        type=parse_feature_spec,
+        help=(
+            "Skip vocab-projection search entirely and run the full effect+MMLU "
+            "pipeline on exactly this list of features, each given as 'layer:id:neg' "
+            "(neg is 1 or 0, e.g. '4:661:1'). --layers is ignored when this is given -- "
+            "the layers needed are inferred from this list. For checking whether the "
+            "downstream filters promote a specific, already-known candidate (e.g. one "
+            "confirmed present via --candidates-only) to selected=True, without paying "
+            "for the whole candidate pool's effect measurement."
+        ),
+    )
+    parser.add_argument(
         "--push-to-hub",
         action="store_true",
         help=(
@@ -457,14 +546,23 @@ def main():
                 df = discover_concept(
                     model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced,
                     debug_log_noop_edits=args.debug_log_noop_edits, minmatch_override=args.minmatch,
-                    enable_cascade=args.enable_cascade,
+                    enable_cascade=args.enable_cascade, candidates_only=args.candidates_only,
+                    features_override=args.features,
                 )
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
                 continue
 
             run_tag = build_run_tag(args.reduced, args.minmatch, args.enable_cascade)
-            layers_slug = build_layers_slug(layers)
+            if args.candidates_only:
+                run_tag += "_candidatesonly"
+            if args.features:
+                run_tag += "_targeted"
+            # --features ignores/overrides `layers` inside discover_concept (inferred from
+            # the override list itself) -- mirror that here so the filename reflects what
+            # actually ran, not the --layers value that was passed in (or its default).
+            effective_layers = sorted({f.layer for f in args.features}) if args.features else layers
+            layers_slug = build_layers_slug(effective_layers)
             out_path = ARTIFACTS_DIR / f"{concept.lower().replace(' ', '_')}__{layers_slug}__{run_tag}.parquet"
             df.to_parquet(out_path, index=False)
             print(f"[{concept}] wrote {len(df)} candidate features to {out_path}")
