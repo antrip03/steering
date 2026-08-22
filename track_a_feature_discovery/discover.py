@@ -173,7 +173,7 @@ def discover_concept(
     model, cvs: list[dict], concept: str, layers=None, device: str = "cuda",
     reduced: bool = False, debug_log_noop_edits: bool = False, minmatch_override: int | None = None,
     enable_cascade: bool = False, candidates_only: bool = False,
-    features_override: list[Feature] | None = None,
+    features_override: list[Feature] | None = None, corpus_batches: int | None = None,
 ) -> pd.DataFrame:
     """reduced=True currently applies only early-exit (see reductions.py).
     All three of the original heuristic Step 2 reductions have now been
@@ -233,7 +233,16 @@ def discover_concept(
     answer directly). `layers` is ignored when this is given -- the layers
     actually needed are inferred from the override list itself, so a
     mismatched --layers can't silently exclude one of the requested
-    features from saes_by_layer/lls."""
+    features from saes_by_layer/lls.
+
+    corpus_batches, if given, subsamples the effect-measurement corpus to
+    that many evenly-spaced batches instead of the full article -- NOT the
+    same thing as the dropped EFFECT_MEASUREMENT_BATCHES reduction (that was
+    part of the validated original-vs-reduced methodology and is gone for
+    good, see reductions.py). This is a separate, always-opt-in diagnostic
+    knob for cases like features_override where corpus length, not
+    candidate count, dominates per-batch cost -- see its own comment at the
+    call site for real numbers."""
     concept_data = get_concept_data(cvs, concept)
 
     def is_single_token(tok: str) -> bool:
@@ -306,6 +315,21 @@ def discover_concept(
 
     effect_candidates = candidates
     effect_text = forget_text
+    if corpus_batches is not None:
+        # Deliberately separate from `reduced`/EFFECT_MEASUREMENT_BATCHES:
+        # that reduction was tried as part of the VALIDATED original-vs-
+        # reduced comparison methodology and dropped because it silently
+        # changed the selected FC (see reductions.py's comment) -- this
+        # flag is not that. It exists only for ad-hoc, already-narrow
+        # diagnostics (paired with features_override) where the corpus
+        # length itself, not candidate count, is the dominant per-batch
+        # fixed cost (observed: ~4s/batch fixed + ~0.11s/candidate
+        # marginal, so even 6 candidates over the full 2494-batch Harry
+        # Potter corpus was a ~3.4h ETA). Never applied unless explicitly
+        # requested -- default None preserves full-corpus behavior exactly.
+        effect_text = "\n".join(evenly_spaced_subsample_lines(forget_text.splitlines(), corpus_batches))
+        print(f"  effect measurement corpus TRUNCATED to {corpus_batches} evenly-spaced batches "
+              f"(diagnostic only -- not the validated full-corpus methodology)")
     early_exit_after_batches = None
     if reduced:
         if enable_cascade:
@@ -470,6 +494,22 @@ def main():
         ),
     )
     parser.add_argument(
+        "--corpus-batches",
+        type=int,
+        default=None,
+        help=(
+            "Subsample the effect-measurement corpus to this many evenly-spaced batches "
+            "instead of the full article. NOT the dropped EFFECT_MEASUREMENT_BATCHES "
+            "reduction (that was part of the validated original-vs-reduced comparison "
+            "methodology and is gone for good -- see reductions.py). This is a separate, "
+            "always-opt-in diagnostic knob for cases like --features where corpus length, "
+            "not candidate count, dominates per-batch cost (observed: ~4s/batch fixed + "
+            "~0.11s/candidate marginal, so even 6 --features candidates over the full "
+            "2494-batch Harry Potter corpus was a ~3.4h ETA). Omit for the exact, full-"
+            "corpus behavior everywhere else in this project."
+        ),
+    )
+    parser.add_argument(
         "--push-to-hub",
         action="store_true",
         help=(
@@ -547,7 +587,7 @@ def main():
                     model, cvs, concept, layers=layers, device=args.device, reduced=args.reduced,
                     debug_log_noop_edits=args.debug_log_noop_edits, minmatch_override=args.minmatch,
                     enable_cascade=args.enable_cascade, candidates_only=args.candidates_only,
-                    features_override=args.features,
+                    features_override=args.features, corpus_batches=args.corpus_batches,
                 )
             except ValueError as e:
                 print(f"[{concept}] SKIPPED: {e}")
@@ -558,6 +598,8 @@ def main():
                 run_tag += "_candidatesonly"
             if args.features:
                 run_tag += "_targeted"
+            if args.corpus_batches is not None:
+                run_tag += f"_corpus{args.corpus_batches}"
             # --features ignores/overrides `layers` inside discover_concept (inferred from
             # the override list itself) -- mirror that here so the filename reflects what
             # actually ran, not the --layers value that was passed in (or its default).

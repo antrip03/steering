@@ -14,6 +14,8 @@ import collections
 import sys
 import types
 
+import torch
+
 # discover.py imports feature_finder.py (-> editor.py -> sae_lens) and
 # evals.py (transformers/datasets/openai/transformer_lens/google.generativeai)
 # at module level -- none of that is needed to test cascade_filter_candidates'
@@ -157,3 +159,55 @@ def test_features_override_skips_search_and_infers_layers(monkeypatch):
     assert captured["layers"] == [5, 9], "layers must be inferred (sorted) from features_override, not the passed-in layers="
     assert len(df) == 2
     assert set(zip(df.layer, df.feature_id, df.neg)) == {(9, 2, True), (5, 1, False)}
+
+
+def test_corpus_batches_truncates_effect_text_but_not_default(monkeypatch):
+    """corpus_batches is a separate, always-opt-in diagnostic knob from the
+    dropped EFFECT_MEASUREMENT_BATCHES reduction -- must default to the full,
+    untruncated corpus (omitting it must not change existing behavior), and
+    when given, must actually shrink what filter_features_by_effect_and_activations
+    receives as forget_set, not just print a message and do nothing."""
+    class FakeLookup:
+        def __init__(self):
+            self.t = collections.defaultdict(lambda: ["tok_a"])
+            self.b = collections.defaultdict(lambda: ["tok_b"])
+
+    class FakeSAE:
+        def __init__(self):
+            self.W_dec = torch.zeros(10, 4)
+
+    def fake_build_all_layer_lookups(model, model_name, layers=None, device="cuda", saes_out=None):
+        lls = {}
+        for layer in layers:
+            lls[layer] = FakeLookup()
+            if saes_out is not None:
+                saes_out[layer] = FakeSAE()
+        return lls
+
+    monkeypatch.setattr(discover, "build_all_layer_lookups", fake_build_all_layer_lookups)
+    monkeypatch.setattr(discover, "get_mlp_act_signs", lambda model, seed_tokens, lines: None)
+    monkeypatch.setattr(discover, "derive_seed_tokens_for_concept", lambda concept, cvs, is_single_token: [" golf"])
+    monkeypatch.setattr(discover, "get_neg_toks", lambda is_single_token: [" the"])
+
+    captured = {}
+
+    def fake_filter_features_by_effect_and_activations(model, features, forget_set, signs, pos_toks, neg_toks, **kwargs):
+        captured["forget_set"] = forget_set
+        return features, ({(f.layer, f.id): [] for f in features}, {(f.layer, f.id): [] for f in features}, {(f.layer, f.id): 1 for f in features})
+
+    monkeypatch.setattr(discover, "filter_features_by_effect_and_activations", fake_filter_features_by_effect_and_activations)
+    monkeypatch.setattr(discover, "filter_features_by_mmlu", lambda model, features, signs, **kwargs: features)
+
+    model = FakeModel()
+    # 20 lines -> more than a couple of batches at the default batch_size (3), so a
+    # corpus_batches=2 truncation is visibly smaller than the full text.
+    wikipedia_content = "\n".join(f"line {i}" for i in range(20))
+    cvs = [{"Concept": "Golf", "wikipedia_content": wikipedia_content}]
+    features = [Feature(layer=5, id=1, neg=False)]
+
+    discover.discover_concept(model, cvs, "Golf", features_override=features)
+    assert captured["forget_set"] == wikipedia_content, "default (no corpus_batches) must pass the full, untruncated corpus"
+
+    discover.discover_concept(model, cvs, "Golf", features_override=features, corpus_batches=2)
+    assert captured["forget_set"] != wikipedia_content
+    assert len(captured["forget_set"].splitlines()) < len(wikipedia_content.splitlines())

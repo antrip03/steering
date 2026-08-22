@@ -81,6 +81,7 @@ def run_discover(
     cvs_path: str | None = None,
     candidates_only: bool = False,
     features: list[str] | None = None,
+    corpus_batches: int | None = None,
     debug_log_noop_edits: bool = True,
     push_to_hub: bool = True,
 ) -> int:
@@ -101,6 +102,8 @@ def run_discover(
         cmd.append("--candidates-only")
     if features:
         cmd += ["--features", *features]
+    if corpus_batches is not None:
+        cmd += ["--corpus-batches", str(corpus_batches)]
     if debug_log_noop_edits:
         cmd.append("--debug-log-noop-edits")
     if push_to_hub:
@@ -127,6 +130,7 @@ def main(
     cvs_path: str = "",
     candidates_only: bool = False,
     features: str = "",
+    corpus_batches: int | None = None,
     push_to_hub: bool = True,
     debug_log_noop_edits: bool = True,
 ):
@@ -143,6 +147,7 @@ def main(
         cvs_path=cvs_path or None,
         candidates_only=candidates_only,
         features=feature_list,
+        corpus_batches=corpus_batches,
         debug_log_noop_edits=debug_log_noop_edits,
         push_to_hub=push_to_hub,
     )
