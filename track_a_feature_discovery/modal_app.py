@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import modal
@@ -72,6 +73,15 @@ hf_cache_volume = modal.Volume.from_name("pisces-track-a-hf-cache", create_if_mi
     # to risk an over-generous timeout than have a legitimately-still-running
     # job silently killed hours in.
     timeout=24 * 60 * 60,
+    # Combined with the periodic mid-run volume commits above and
+    # discover.py's own checkpoint/resume (per-batch for effect measurement,
+    # per-candidate for MMLU): if the container gets killed outright (Modal
+    # preemption, host OOM-kill, infra restart) rather than crashing
+    # gracefully, Modal itself retries this same call automatically, and the
+    # retry resumes from the last committed checkpoint instead of restarting
+    # the concept from scratch. Not a substitute for actually watching a
+    # multi-hour run, just insurance against not noticing immediately.
+    retries=3,
     secrets=[modal.Secret.from_name("huggingface")],
     volumes={
         "/root/steering/artifacts/checkpoints": checkpoints_volume,
@@ -116,13 +126,21 @@ def run_discover(
         cmd.append("--push-to-hub")
 
     print(f"running: {' '.join(cmd)}", flush=True)
+    # subprocess.run + a single commit() in `finally` only protects against a
+    # graceful crash (Python exception -> nonzero exit -> finally still
+    # runs). It does NOT protect against the container itself being killed
+    # outright (Modal preemption, a host OOM-kill, an infra restart) -- for a
+    # multi-hour MIDDLE_LAYERS run, that's the failure mode that actually
+    # matters, and local checkpoint writes are invisible to future
+    # containers until committed. Popen + poll lets this commit periodically
+    # WHILE the subprocess is still running, not just once at the end.
+    proc = subprocess.Popen(cmd, cwd="/root/steering/track_a_feature_discovery")
     try:
-        result = subprocess.run(cmd, cwd="/root/steering/track_a_feature_discovery")
-        return result.returncode
+        while proc.poll() is None:
+            time.sleep(120)
+            checkpoints_volume.commit()
+        return proc.returncode
     finally:
-        # Commit even on failure/timeout -- a partial checkpoint from a run
-        # that died mid-batch is exactly what lets the next invocation resume
-        # instead of redoing already-measured batches.
         checkpoints_volume.commit()
 
 
