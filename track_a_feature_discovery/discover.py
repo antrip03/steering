@@ -310,7 +310,21 @@ def discover_concept(
     # batches it never actually measured for its own candidates -- corrupting
     # results rather than crashing. Real risk, not hypothetical: this project
     # has already run Golf at layer 1 and layer 6 in the same investigation.
+    #
+    # Also corpus_batches-scoped, for the same reason: a real run confirmed
+    # this the hard way -- a --corpus-batches 100 run on Modal silently
+    # resumed get_feature_effect from a full-corpus (2494-batch) checkpoint
+    # left over on the persistent checkpoints Volume by an earlier killed
+    # run of the same concept+layers. next_batch_start (513) was past every
+    # index in the truncated 100-batch run's own batch_starts, so every
+    # batch got skipped ("if i < resume_from: continue") and the whole loop
+    # completed instantly, silently returning the stale full-corpus results
+    # instead of computing anything for the truncated one. Two different
+    # corpus_batches values (including None, i.e. full corpus) for the same
+    # concept+layers must never share a checkpoint path.
     checkpoint_dir = ARTIFACTS_DIR.parent / "checkpoints" / concept_slug / build_layers_slug(layers)
+    if corpus_batches is not None:
+        checkpoint_dir = checkpoint_dir / f"corpus{corpus_batches}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     effect_candidates = candidates

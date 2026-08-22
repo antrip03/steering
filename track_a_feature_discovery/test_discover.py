@@ -193,6 +193,7 @@ def test_corpus_batches_truncates_effect_text_but_not_default(monkeypatch):
 
     def fake_filter_features_by_effect_and_activations(model, features, forget_set, signs, pos_toks, neg_toks, **kwargs):
         captured["forget_set"] = forget_set
+        captured.setdefault("checkpoint_dirs", []).append(kwargs.get("checkpoint_dir"))
         return features, ({(f.layer, f.id): [] for f in features}, {(f.layer, f.id): [] for f in features}, {(f.layer, f.id): 1 for f in features})
 
     monkeypatch.setattr(discover, "filter_features_by_effect_and_activations", fake_filter_features_by_effect_and_activations)
@@ -211,3 +212,17 @@ def test_corpus_batches_truncates_effect_text_but_not_default(monkeypatch):
     discover.discover_concept(model, cvs, "Golf", features_override=features, corpus_batches=2)
     assert captured["forget_set"] != wikipedia_content
     assert len(captured["forget_set"].splitlines()) < len(wikipedia_content.splitlines())
+
+    # A real Modal run hit this: a --corpus-batches 100 run silently resumed
+    # get_feature_effect from a full-corpus checkpoint left on the persistent
+    # checkpoints Volume by an earlier killed run of the same concept+layers --
+    # every batch got skipped ("if i < resume_from: continue") because the
+    # checkpoint's next_batch_start was past the truncated corpus's own batch
+    # range, so the stale full-corpus results were silently returned instead
+    # of anything computed on the truncated one. checkpoint_dir must differ
+    # between corpus_batches=None and any real corpus_batches value.
+    no_truncation_dir, truncated_dir = captured["checkpoint_dirs"]
+    assert no_truncation_dir != truncated_dir, (
+        "checkpoint_dir must be scoped by corpus_batches -- a full-corpus run and a "
+        "truncated-corpus run for the same concept/layers must never share checkpoint state"
+    )
