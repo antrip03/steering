@@ -70,6 +70,22 @@ class FeatureRecord:
     mass_ratio_or_effect_score: float  # scalar from filter_features_by_effect_and_activations
     selected: bool  # did this feature survive filtering into the final FeatureCollection
 
+    # PISCES's own removal criterion (see pisces_ref/feature_finder.py::
+    # filter_features_by_effect_and_activations) is `pos_effect > 0 or
+    # neg_effect < -2` -- a candidate whose pos_effect and neg_effect both sit
+    # near zero survives by failing to trigger either removal condition, not
+    # by showing any positive evidence of a real effect. mass_ratio_or_effect_score
+    # above already holds pos_effect; neg_effect was computed by the same
+    # filtering call but silently discarded before this schema existed to record
+    # it. Persisting it lets a downstream consumer (or a human) judge candidate
+    # strength directly -- e.g. max(abs(mass_ratio_or_effect_score),
+    # abs(neg_effect_score)) as a magnitude floor -- without this project baking
+    # in a specific threshold choice into `selected` itself, which stays a
+    # faithful, unmodified mirror of PISCES's own criterion. Optional (defaults
+    # to None) so existing FeatureRecord construction sites aren't forced to
+    # supply it immediately.
+    neg_effect_score: float | None = None
+
     def to_pisces_feature(self):
         """Round-trip into PISCES's editor.Feature dataclass (large defaults to False)."""
         from pisces_ref.editor import Feature

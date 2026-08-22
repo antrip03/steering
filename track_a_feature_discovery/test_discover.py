@@ -14,6 +14,7 @@ import collections
 import sys
 import types
 
+import pytest
 import torch
 
 # discover.py imports feature_finder.py (-> editor.py -> sae_lens) and
@@ -226,3 +227,53 @@ def test_corpus_batches_truncates_effect_text_but_not_default(monkeypatch):
         "checkpoint_dir must be scoped by corpus_batches -- a full-corpus run and a "
         "truncated-corpus run for the same concept/layers must never share checkpoint state"
     )
+
+
+def test_neg_effect_score_persisted_alongside_pos_effect(monkeypatch):
+    """PISCES's own removal criterion (pos_effect > 0 or neg_effect < -2) uses
+    both values, but only pos_effect (mass_ratio_or_effect_score) was ever
+    persisted -- neg_effect was computed by the same filtering call and
+    silently discarded. A real targeted run (Harry Potter, 6 known candidates)
+    showed all 6 survived with pos_effect magnitudes spanning ~200x
+    (-1.78e-4 down to -9.4e-7) yet an identical selected=True, because the
+    criterion has no minimum-magnitude floor -- neg_effect_score gives a
+    downstream consumer the other half of that picture without this project
+    baking a threshold into `selected` itself."""
+    class FakeLookup:
+        def __init__(self):
+            self.t = collections.defaultdict(lambda: ["tok_a"])
+            self.b = collections.defaultdict(lambda: ["tok_b"])
+
+    class FakeSAE:
+        def __init__(self):
+            self.W_dec = torch.zeros(10, 4)
+
+    def fake_build_all_layer_lookups(model, model_name, layers=None, device="cuda", saes_out=None):
+        lls = {}
+        for layer in layers:
+            lls[layer] = FakeLookup()
+            if saes_out is not None:
+                saes_out[layer] = FakeSAE()
+        return lls
+
+    monkeypatch.setattr(discover, "build_all_layer_lookups", fake_build_all_layer_lookups)
+    monkeypatch.setattr(discover, "get_mlp_act_signs", lambda model, seed_tokens, lines: None)
+    monkeypatch.setattr(discover, "derive_seed_tokens_for_concept", lambda concept, cvs, is_single_token: [" golf"])
+    monkeypatch.setattr(discover, "get_neg_toks", lambda is_single_token: [" the"])
+
+    feature = Feature(layer=5, id=1, neg=False)
+    key = (feature.layer, feature.id)
+
+    def fake_filter_features_by_effect_and_activations(model, features, forget_set, signs, pos_toks, neg_toks, **kwargs):
+        return features, ({key: [-0.0002, -0.0004]}, {key: [-0.5, -0.3]}, {key: 1})
+
+    monkeypatch.setattr(discover, "filter_features_by_effect_and_activations", fake_filter_features_by_effect_and_activations)
+    monkeypatch.setattr(discover, "filter_features_by_mmlu", lambda model, features, signs, **kwargs: features)
+
+    model = FakeModel()
+    cvs = [{"Concept": "Golf", "wikipedia_content": "line one\nline two"}]
+
+    df = discover.discover_concept(model, cvs, "Golf", features_override=[feature])
+
+    assert df.loc[0, "mass_ratio_or_effect_score"] == pytest.approx(-0.0003)
+    assert df.loc[0, "neg_effect_score"] == pytest.approx(-0.4)

@@ -870,6 +870,121 @@ this fix is wrong — `get_mlp_act_signs`, `get_feature_activations`, and
 own forward passes) are the three GPU-heavy paths identified so far; there
 could be others not yet exercised on a real 12+ hour multi-layer run.
 
+### Migrating to Modal, and the Harry Potter sanity check for real
+
+Kaggle's one-experiment-per-session, paste-the-log-back workflow was too slow
+for iterating on the open questions above, so `modal_app.py` was added: a
+thin subprocess wrapper around `discover.py`'s own CLI (no reimplementation
+of any pipeline logic), running on an A10G (24GB, Ampere, native bf16)
+instead of Kaggle's T4 (~14.5GB usable, fp16-only), with no 12-hour session
+cap and a persistent HF-cache Volume so the model/SAEs download once. See its
+own docstring for setup (`modal secret create huggingface ...`, run locally,
+not through an agent, since token material shouldn't pass through one) and
+usage.
+
+**Harry Potter's candidate search, finally run for real** (this project's
+`data/project_concepts.json` dropped Harry Potter for data-quality reasons —
+see `schema.py` — but it's still in PISCES's own `pisces_ref/data/cvs.json`,
+usable via `--cvs-path`). First attempt (original settings, layers 1/4/20)
+hit a ~24h ETA on effect measurement: 277 candidates × 2494 batches (Harry
+Potter's article is ~29x longer than Golf's), at ~35s/batch. That number
+itself was informative — traced to a large **fixed cost per batch** (~4s,
+from the one `clean_logits` pass plus per-batch bookkeeping) dominating over
+the **marginal cost per candidate** (~0.11s), meaning corpus length, not
+candidate count, is often the real cost driver.
+
+Added `--candidates-only` (stop right after vocab-projection search, no
+effect/MMLU) to get a cheap face-validity read instead of waiting a day.
+Cross-checked all 277 candidates' `(layer, id, neg)` identities against
+PISCES's own 5 hand-picked Harry Potter features
+(`pisces_ref/erasing_harry_potter.ipynb`):
+
+| PISCES feature | In our pool? | top_tokens |
+|---|---|---|
+| `Feature(1, 8965, True)` | not found | — |
+| `Feature(1, 13394, False)` | found (exact match) | garbage (code fragments) |
+| `Feature(4, 661, True)` | found (exact match) | `Rowling, Voldemort, Weasley, Hogwarts` |
+| `Feature(20, 11104, True)` | found (exact match) | `wizard, harry` |
+| `Feature(20, 14668, False)` | found (exact match) | garbage (code fragments) |
+
+**4 of 5 exact matches (80% recall)**, two with unmistakably on-topic
+`top_tokens` — real signal, not just the coincidental single-token-overlap
+noise seen on Golf. The rest of the 277 mostly *is* that noise, and the two
+generic seed words (`' you'`, `' don'`/`' didn'` — TF-IDF picked these up
+even for Harry Potter, alongside the genuinely distinctive proper nouns)
+produce clean, coherent, but off-topic multi-hit clusters (pronoun/negation
+features). So the earlier concern about coincidental matches wasn't wrong —
+it just wasn't the whole picture either.
+
+### `--features` + `--corpus-batches`, and a second checkpoint-scoping bug
+
+To check whether the downstream filters would actually promote those 4
+known-good candidates to `selected=True` — without paying for the whole
+277-candidate pool — added `--features layer:id:neg[,...]` (skip search
+entirely, run effect+MMLU on an explicit handful) and `--corpus-batches N`
+(subsample the effect corpus to N evenly-spaced batches). **Not** the same
+thing as the dropped `EFFECT_MEASUREMENT_BATCHES` reduction — that was part
+of the validated original-vs-reduced methodology and stays gone; this is a
+separate, always-opt-in knob for ad-hoc diagnostics like this one, where
+corpus length rather than candidate count dominates cost (even 6
+`--features` candidates over the full 2494-batch corpus was a ~3.4h ETA).
+
+First `--corpus-batches 100` run silently produced a wrong result: it
+resumed `get_feature_effect` from a **full-corpus** checkpoint left on the
+persistent Modal checkpoints Volume by an earlier killed 24h-ETA run of the
+same concept+layers. The checkpoint's `next_batch_start` (513) was past
+every index in the truncated 100-batch run's own range, so
+`if i < resume_from: continue` skipped every batch — the loop "completed"
+instantly and silently returned stale full-corpus state instead of computing
+anything. Same bug class, same fix as the earlier layer-scoping issue:
+`checkpoint_dir` now also includes a `corpus{N}` segment when
+`corpus_batches` is set, so a full-corpus and a truncated-corpus run for the
+same concept/layers can never share checkpoint state. The one contaminated
+output this produced was deleted from the HF hub rather than kept around
+mislabeled.
+
+### The inert-candidate-contamination concern, confirmed with real numbers
+
+Re-ran cleanly (6 candidates: the 4 PISCES matches + 2 deliberate contrasts —
+the generic `you/your` cluster and a garbage-token candidate — over 100
+truncated batches). **All 6 came back `selected=True`.** The actual
+`pos_effect` values explain why:
+
+| Feature | pos_effect | selected |
+|---|---|---|
+| `(4, 661, True)` — Rowling/Voldemort/Weasley/Hogwarts | -1.78e-4 | True |
+| `(20, 11104, True)` — wizard/harry | -2.35e-4 | True |
+| `(1, 13394, False)` — garbage tokens | -9.4e-7 | True |
+| `(20, 14668, False)` — garbage tokens | -1.98e-4 | True |
+| `(4, 3487, True)` — generic "your/you" | -2.9e-5 | True |
+| `(1, 370, False)` — garbage tokens | -1.6e-6 | True |
+
+PISCES's own removal criterion is `pos_effect > 0 or neg_effect < -2` — a
+candidate survives by *failing to trigger either removal condition*, not by
+showing positive evidence of a real effect. `(1, 13394)`'s effect
+(-9.4e-7) is ~200x smaller in magnitude than `(4, 661)`'s (-1.78e-4), yet
+both get the identical `selected=True`. (Corpus truncation to 100 batches
+may damp these magnitudes somewhat, so the exact numbers shouldn't be
+over-read — but the qualitative point, that the criterion has no
+minimum-effect floor, doesn't depend on sample size.)
+
+**Decision**: don't change `selected` or PISCES's own criterion — the task
+is to replicate their methodology faithfully, and quietly tightening it
+would make Track A no longer comparable to what a faithful reproduction (or
+the paper itself) reports. Instead, added `neg_effect_score` to
+`schema.FeatureRecord` (optional, defaults to `None`) — `neg_effect` was
+already computed by the same filtering call and silently discarded before
+this schema field existed. This gives a downstream consumer (or a human) the
+data needed to judge candidate strength directly (e.g.
+`max(abs(mass_ratio_or_effect_score), abs(neg_effect_score))` as a magnitude
+floor) without this project baking a specific threshold choice into
+`selected` itself. Optional with a `None` default, so it doesn't disturb
+Track B (`entanglement_metrics.py`) or Track C (`run_erasure_eval.py`),
+which already exist and read specific named columns from this schema, not an
+exact field set (confirmed both tracks' test suites still pass unchanged).
+Neither currently reads this new column -- the raw data is just there now
+instead of silently discarded, for whenever it's needed.
+
 ## Requirements
 
 CUDA GPU, PISCES's dependencies (`../requirements.txt`), and network/hub

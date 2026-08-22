@@ -289,6 +289,8 @@ def discover_concept_kaggle(
 
         pos_effect_vals = pos_effects.get((feature.layer, feature.id))
         effect_score = float(sum(pos_effect_vals) / len(pos_effect_vals)) if pos_effect_vals else None
+        neg_effect_vals = neg_effects.get((feature.layer, feature.id))
+        neg_effect_score = float(sum(neg_effect_vals) / len(neg_effect_vals)) if neg_effect_vals else None
 
         rows.append(
             FeatureRecord(
@@ -301,6 +303,7 @@ def discover_concept_kaggle(
                 bottom_tokens=bottom_tokens,
                 mass_ratio_or_effect_score=effect_score,
                 selected=(feature.layer, feature.id, feature.neg) in selected_keys,
+                neg_effect_score=neg_effect_score,
             ).to_dict()
         )
 
