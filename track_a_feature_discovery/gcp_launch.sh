@@ -11,12 +11,21 @@
 # Usage:
 #   ./gcp_launch.sh "Golf" "3 4 5 6 7 8 9 10 11 12"
 #
-# One-time setup already done this session:
-#   - gcloud auth: already authenticated as anshultripathi002@gmail.com
-#   - Compute Engine API: already enabled
-#   - GCS bucket gs://pisces-track-a-code: already created and holds a
-#     packaged copy of this repo (re-run the tar/upload step below if the
-#     code has changed since)
+# One-time setup already done this session (under guneesh_g@ee.iitr.ac.in's
+# steering-505317 project -- switched from the original
+# project-e6820050-45d3-4631-800 partway through, both accounts/projects
+# were verified to have billing enabled, Compute Engine API on, and 1
+# NVIDIA_L4_GPUS quota in us-central1):
+#   - gcloud auth/config: `gcloud config set account guneesh_g@ee.iitr.ac.in`
+#     + `gcloud config set project steering-505317`
+#   - GCS bucket gs://pisces-track-a-code-2: created and holds a packaged
+#     copy of this repo (re-run the tar/upload step below if the code has
+#     changed since)
+#   - IAM: the project's default compute service account
+#     (688368684509-compute@developer.gserviceaccount.com) was granted
+#     roles/storage.objectAdmin on the bucket -- without this, the VM can't
+#     read the code tarball or write its log back (hit this for real on the
+#     first project used, see gcp_startup.sh's comments)
 #
 # Quota note: this project's NVIDIA_L4_GPUS quota is 1 (region us-central1,
 # confirmed via `gcloud compute regions describe us-central1`) -- only ONE
@@ -26,7 +35,7 @@ set -euo pipefail
 CONCEPT="${1:?Usage: ./gcp_launch.sh CONCEPT \"LAYER LAYER ...\"}"
 LAYERS="${2:?Usage: ./gcp_launch.sh CONCEPT \"LAYER LAYER ...\"}"
 
-PROJECT="project-e6820050-45d3-4631-800"
+PROJECT="steering-505317"
 # L4 stock is genuinely volatile right now (observed us-central1-a and
 # us-central1-b each reject with ZONE_RESOURCE_POOL_EXHAUSTED while pointing
 # at the other as having capacity, seconds apart) -- try every zone known to
@@ -34,7 +43,7 @@ PROJECT="project-e6820050-45d3-4631-800"
 # --filter="name=nvidia-l4"`) instead of hardcoding one that may be out of
 # stock by the time this runs.
 ZONES=(us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b us-west1-c us-east1-b us-east1-c us-east1-d us-east4-a)
-BUCKET="pisces-track-a-code"
+BUCKET="pisces-track-a-code-2"
 INSTANCE_NAME="pisces-$(echo "$CONCEPT" | tr '[:upper:] ' '[:lower:]-')-$(date +%s)"
 HF_TOKEN_VALUE="$(cat ~/.cache/huggingface/token)"
 
