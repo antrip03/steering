@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-HF_REPO_ID = "antrip03/pisces-track-a-runs"
+HF_REPO_ID = "steeringantrip03/pisces-track-a-runs"  # transferred from antrip03/pisces-track-a-runs so org members (e.g. teammates running on their own Modal accounts) have real write access, not just an individually-added collaborator
 
 
 def push_run_output(local_path: Path) -> str:
