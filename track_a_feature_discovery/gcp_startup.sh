@@ -18,7 +18,7 @@
 # images, into Cloud Logging via the pre-installed ops agent. The full log
 # file is also copied to GCS at the end (and periodically during the run)
 # so it survives even if the VM is later deleted.
-set -uo pipefail
+set -euo pipefail
 exec > >(tee -a /var/log/pisces-run.log) 2>&1
 
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
@@ -31,6 +31,29 @@ INSTANCE_NAME="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.in
 
 log "=== Track A production run starting: concept=$CONCEPT layers=$LAYERS instance=$INSTANCE_NAME ==="
 
+# set -e means any failed command below exits the script immediately rather
+# than cascading silently into later steps operating on missing/partial
+# state -- a real run hit exactly that: the code-tarball download failed
+# (IAM permissions, since fixed), but without set -e the script just kept
+# going, cd'd into a directory that was never created, and "python
+# discover.py" ran from the wrong cwd with a confusing "file not found"
+# instead of the actual, immediately-obvious download failure.
+#
+# The trap guarantees the final log upload + shutdown still happen on ANY
+# exit (success, a set -e failure, or an uncaught error) -- without it, a
+# failure would exit before reaching the log-upload/shutdown lines at the
+# bottom, leaving no uploaded log AND a VM that never stops billing.
+on_exit() {
+  local exit_code=$?
+  log "=== Script exiting with code $exit_code ==="
+  kill "$LOG_UPLOADER_PID" 2>/dev/null || true
+  gcloud storage cp /var/log/pisces-run.log "gs://${GCS_BUCKET}/logs/${INSTANCE_NAME}.log" || \
+    log "WARNING: final log upload failed -- log only survives via serial port output while the VM is still running"
+  log "Shutting down to stop billing (disk persists until manually deleted)."
+  shutdown -h now
+}
+trap on_exit EXIT
+
 # Periodic log upload in the background, so progress is visible on GCS even
 # mid-run, not just after completion -- same rationale as Modal's periodic
 # checkpoint commits.
@@ -41,14 +64,14 @@ log "=== Track A production run starting: concept=$CONCEPT layers=$LAYERS instan
 LOG_UPLOADER_PID=$!
 
 log "Installing Python 3.12 (requirements.txt requires exactly 3.12, not the base image's default)..."
-add-apt-repository -y ppa:deadsnakes/ppa >>/var/log/pisces-run.log 2>&1
-apt-get update -qq >>/var/log/pisces-run.log 2>&1
-apt-get install -y -qq python3.12 python3.12-venv python3.12-dev >>/var/log/pisces-run.log 2>&1
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update -qq
+apt-get install -y -qq python3.12 python3.12-venv python3.12-dev
 
 log "Pulling code from GCS..."
 mkdir -p /opt/pisces
 cd /opt/pisces
-gcloud storage cp "gs://${GCS_BUCKET}/pisces-code.tar.gz" . 2>&1
+gcloud storage cp "gs://${GCS_BUCKET}/pisces-code.tar.gz" .
 tar xzf pisces-code.tar.gz
 
 log "Setting up venv and installing dependencies..."
@@ -65,12 +88,7 @@ log "Starting discover.py..."
 cd /opt/pisces/track_a_feature_discovery
 python discover.py --device cuda --concept "$CONCEPT" --layers $LAYERS \
   --reduced --debug-log-noop-edits --push-to-hub
-DISCOVER_EXIT=$?
 
-log "=== discover.py exited with code $DISCOVER_EXIT ==="
-
-kill "$LOG_UPLOADER_PID" 2>/dev/null || true
-gcloud storage cp /var/log/pisces-run.log "gs://${GCS_BUCKET}/logs/${INSTANCE_NAME}.log" 2>&1
-
-log "Uploading complete. Shutting down to stop billing (disk persists until manually deleted)."
-shutdown -h now
+log "=== discover.py finished successfully ==="
+# on_exit (registered via trap above) handles the final log upload and
+# shutdown for every exit path, success or failure -- nothing more needed here.
