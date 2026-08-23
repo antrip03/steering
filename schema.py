@@ -53,18 +53,27 @@ MODEL_NAME = "gemma-2-2b-it"
 # discover.py's output filename encodes the run's settings (build_run_tag /
 # build_layers_slug in track_a_feature_discovery/discover.py), added after a
 # real run showed different settings for the same concept silently
-# overwriting each other's output. The OFFICIAL, unrestricted production run
-# (no --reduced, no --layers restriction, no diagnostic flags) always
-# produces this exact suffix: build_layers_slug(None) == "all_layers" and
-# build_run_tag(reduced=False, minmatch_override=None, enable_cascade=False)
-# == "original". Track B (entanglement_metrics.py) and Track C
-# (run_erasure_eval.py) both need to find that one canonical file per
-# concept -- this is the single place that filename convention is defined,
-# so all three (plus tests/fixtures.py's synthetic data) can't silently
-# drift apart again the way they already did once (both tracks were still
-# looking for the pre-fix bare "<concept>.parquet" name until this was
-# caught by a real sanity check against actual discover.py output).
-CANONICAL_FEATURE_RUN_TAG = "all_layers__original"
+# overwriting each other's output. Track B (entanglement_metrics.py) and
+# Track C (run_erasure_eval.py) both need to find that one canonical file
+# per concept -- this is the single place that filename convention is
+# defined, so all three (plus tests/fixtures.py's synthetic data) can't
+# silently drift apart again.
+#
+# This was WRONG once already: originally set to "all_layers__original"
+# (build_layers_slug(None) + build_run_tag(reduced=False, ...)), on the
+# assumption that "the official run" meant fully unrestricted. It doesn't --
+# this project's actual production scope is REDUCED_CONCEPTS x
+# reductions.MIDDLE_LAYERS ([3..12]) with --reduced (for early-exit, which
+# is provably lossless -- see reductions.py -- so "reduced" here changes
+# nothing about correctness, only speed). A real Poison run confirmed the
+# real filename: poison__layers_3_4_5_6_7_8_9_10_11_12__reduced.parquet, not
+# poison__all_layers__original.parquet. Kept as a hardcoded string rather
+# than importing build_layers_slug(MIDDLE_LAYERS) from
+# track_a_feature_discovery/reductions.py to avoid a cross-directory import
+# dependency from this shared root-level module -- must be kept in sync by
+# hand if MIDDLE_LAYERS ever changes (unlikely at this point; it's a settled
+# project decision).
+CANONICAL_FEATURE_RUN_TAG = "layers_3_4_5_6_7_8_9_10_11_12__reduced"
 
 
 def feature_artifact_filename(concept: str) -> str:
