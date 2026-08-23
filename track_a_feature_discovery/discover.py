@@ -375,6 +375,7 @@ def discover_concept(
         model, effect_filtered, signs,
         checkpoint_path=str(checkpoint_dir / "mmlu.ckpt"),
         debug_log_noop_edits=debug_log_noop_edits,
+        progress_log=True,
     )
     selected_keys = {(f.layer, f.id, f.neg) for f in selected}
     print(f"[{concept}] {len(selected)} features survived filtering (selected=True)")
