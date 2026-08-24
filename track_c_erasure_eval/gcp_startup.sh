@@ -17,6 +17,8 @@ log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 CONCEPTS="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/concepts')"
 HF_TOKEN="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/hf-token')"
 GCS_BUCKET="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcs-bucket')"
+K="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/k')"
+VALUE="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/value')"
 INSTANCE_NAME="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/name')"
 
 log "=== Track C erasure eval starting: concepts=$CONCEPTS instance=$INSTANCE_NAME ==="
@@ -80,6 +82,6 @@ IFS=',' read -ra CONCEPT_LIST <<< "$CONCEPTS"
 for c in "${CONCEPT_LIST[@]}"; do
   CONCEPT_ARGS+=(--concept "$c")
 done
-python run_erasure_eval.py --device cuda "${CONCEPT_ARGS[@]}"
+python run_erasure_eval.py --device cuda "${CONCEPT_ARGS[@]}" --k "$K" --value "$VALUE"
 
 log "=== run_erasure_eval.py finished successfully ==="

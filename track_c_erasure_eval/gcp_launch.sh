@@ -7,6 +7,12 @@
 # Usage:
 #   ./gcp_launch.sh "Golf,Uranium,Poison"
 #   ./gcp_launch.sh "Homo Sapiens"
+#   ./gcp_launch.sh "Golf" 0.8 10   # optional k, value overrides (see
+#                                   # run_erasure_eval.py --k/--value --
+#                                   # default 0.4/36 is the notebook's
+#                                   # hardcoded Harry Potter setting, observed
+#                                   # too aggressive for at least one other
+#                                   # concept: near-chance MMLU afterward)
 #
 # Concepts are comma-separated (not space-separated) so multi-word concept
 # names survive intact through instance metadata and the startup script's
@@ -23,7 +29,9 @@
 # service account (granted roles/aiplatform.user) -- no API key needed.
 set -euo pipefail
 
-CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\"}"
+CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\" [k] [value]}"
+K="${2:-0.4}"
+VALUE="${3:-36}"
 
 PROJECT="steering-505317"
 ZONES=(us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b us-west1-c us-east1-b us-east1-c us-east1-d us-east4-a)
@@ -46,7 +54,7 @@ for ZONE in "${ZONES[@]}"; do
     --boot-disk-type=pd-balanced \
     --maintenance-policy=TERMINATE \
     --metadata-from-file=startup-script=gcp_startup.sh \
-    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE" \
+    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",k="$K",value="$VALUE" \
     --scopes=https://www.googleapis.com/auth/cloud-platform 2>&1 | tee /tmp/gcp_create_attempt_c.log; then
     CREATED=1
     break

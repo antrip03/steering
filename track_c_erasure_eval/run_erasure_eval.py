@@ -136,6 +136,15 @@ def main():
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--mmlu-limit", type=int, default=300)
     parser.add_argument(
+        "--k", type=float, default=0.4,
+        help="Concept.k (PISCES's tau). Default is the notebook's hardcoded Harry Potter "
+             "value -- see evaluate_concept()'s docstring on why this isn't per-concept tuned yet.",
+    )
+    parser.add_argument(
+        "--value", type=float, default=36,
+        help="Concept.value (PISCES's mu). Same caveat as --k.",
+    )
+    parser.add_argument(
         "--push-to-hub",
         action="store_true",
         help="Upload each concept's result parquet to hub_storage.HF_REPO_ID after writing it "
@@ -194,7 +203,7 @@ def main():
     with torch.no_grad():
         if args.hardcoded_hp:
             pos_toks = load_pos_toks("Harry Potter")
-            row = evaluate_concept(model, "Harry Potter", HARDCODED_HP_FEATURES, pos_toks, mmlu_limit=args.mmlu_limit)
+            row = evaluate_concept(model, "Harry Potter", HARDCODED_HP_FEATURES, pos_toks, k=args.k, value=args.value, mmlu_limit=args.mmlu_limit)
             write_and_maybe_push(row)
         else:
             concepts = args.concepts or NATURAL_CONCEPTS
@@ -205,7 +214,7 @@ def main():
                 except (FileNotFoundError, ValueError) as e:
                     print(f"[{concept}] SKIPPED: {e}")
                     continue
-                row = evaluate_concept(model, concept, features, pos_toks, mmlu_limit=args.mmlu_limit)
+                row = evaluate_concept(model, concept, features, pos_toks, k=args.k, value=args.value, mmlu_limit=args.mmlu_limit)
                 write_and_maybe_push(row)
 
 
