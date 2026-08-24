@@ -21,7 +21,11 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 PISCES_REF = ROOT / "pisces_ref"
-for p in (ROOT, PISCES_REF):
+# hub_storage lives under track_a_feature_discovery/ (Track C reuses Track
+# A's push-to-hub mechanism as-is rather than duplicating it) -- needed for
+# write_and_maybe_push's `from hub_storage import push_run_output` below.
+TRACK_A = ROOT / "track_a_feature_discovery"
+for p in (ROOT, PISCES_REF, TRACK_A):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
