@@ -7,12 +7,18 @@
 # Usage:
 #   ./gcp_launch.sh "Golf,Uranium,Poison"
 #   ./gcp_launch.sh "Homo Sapiens"
-#   ./gcp_launch.sh "Golf" 0.8 10   # optional k, value overrides (see
-#                                   # run_erasure_eval.py --k/--value --
-#                                   # default 0.4/36 is the notebook's
-#                                   # hardcoded Harry Potter setting, observed
-#                                   # too aggressive for at least one other
-#                                   # concept: near-chance MMLU afterward)
+#   ./gcp_launch.sh "Golf" 0.8 10 20   # optional k, value, max-features
+#                                      # overrides (see run_erasure_eval.py
+#                                      # --k/--value/--max-features --
+#                                      # default 0.4/36/unlimited is the
+#                                      # notebook's hardcoded setting with all
+#                                      # Track A-selected features, observed
+#                                      # too aggressive: real model output
+#                                      # collapses into repetition regardless
+#                                      # of k/value once 46-435 features are
+#                                      # edited simultaneously, vs the
+#                                      # notebook's own validated 5-feature
+#                                      # Harry Potter example)
 #
 # Concepts are comma-separated (not space-separated) so multi-word concept
 # names survive intact through instance metadata and the startup script's
@@ -29,9 +35,10 @@
 # service account (granted roles/aiplatform.user) -- no API key needed.
 set -euo pipefail
 
-CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\" [k] [value]}"
+CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\" [k] [value] [max-features]}"
 K="${2:-0.4}"
 VALUE="${3:-36}"
+MAX_FEATURES="${4:-0}"  # 0 means unset/unlimited -- see gcp_startup.sh
 
 PROJECT="steering-505317"
 ZONES=(us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b us-west1-c us-east1-b us-east1-c us-east1-d us-east4-a)
@@ -54,7 +61,7 @@ for ZONE in "${ZONES[@]}"; do
     --boot-disk-type=pd-balanced \
     --maintenance-policy=TERMINATE \
     --metadata-from-file=startup-script=gcp_startup.sh \
-    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",k="$K",value="$VALUE" \
+    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",k="$K",value="$VALUE",max-features="$MAX_FEATURES" \
     --scopes=https://www.googleapis.com/auth/cloud-platform 2>&1 | tee /tmp/gcp_create_attempt_c.log; then
     CREATED=1
     break

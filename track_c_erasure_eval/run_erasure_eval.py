@@ -64,7 +64,7 @@ def load_concept_data(concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
-def load_selected_features(concept: str) -> list[Feature]:
+def load_selected_features(concept: str, max_features: int | None = None) -> list[Feature]:
     path = FEATURES_DIR / feature_artifact_filename(concept)
     if not path.exists():
         raise FileNotFoundError(
@@ -74,6 +74,17 @@ def load_selected_features(concept: str) -> list[Feature]:
         )
     df = pd.read_parquet(path)
     selected = df[df["selected"]]
+    if max_features is not None and len(selected) > max_features:
+        # Track A's selection filters are far more permissive than PISCES's
+        # own validated example (5 hand-picked Harry Potter features) --
+        # observed selecting 46-435 features per concept across all 10
+        # completed concepts, and editing that many features simultaneously
+        # produced degenerate, repetition-collapsed generation (confirmed by
+        # inspecting real model output, not just the aggregate metrics) even
+        # at conservative k/value settings. Capping to the top-N by effect
+        # magnitude keeps the edit closer to the validated reference scale
+        # without discarding Track A's already-completed selection work.
+        selected = selected.reindex(selected["mass_ratio_or_effect_score"].abs().sort_values(ascending=False).index).head(max_features)
     return [Feature(layer=int(r.layer), id=int(r.feature_id), neg=bool(r.neg)) for r in selected.itertuples()]
 
 
@@ -157,6 +168,15 @@ def main():
         help="Concept.value (PISCES's mu). Same caveat as --k.",
     )
     parser.add_argument(
+        "--max-features", type=int, default=None,
+        help="Cap the number of Track A-selected features actually edited, keeping the "
+             "top-N by |mass_ratio_or_effect_score|. Track A's selection filters are far "
+             "more permissive than PISCES's own validated Harry Potter example (5 features) "
+             "-- observed selecting 46-435 features per concept, which produced "
+             "repetition-collapsed, incoherent generation even at conservative k/value. "
+             "Unset (None) uses all selected features, the prior behavior.",
+    )
+    parser.add_argument(
         "--push-to-hub",
         action="store_true",
         help="Upload each concept's result parquet to hub_storage.HF_REPO_ID after writing it "
@@ -221,7 +241,7 @@ def main():
             concepts = args.concepts or NATURAL_CONCEPTS
             for concept in concepts:
                 try:
-                    features = load_selected_features(concept)
+                    features = load_selected_features(concept, max_features=args.max_features)
                     pos_toks = load_pos_toks(concept)
                 except (FileNotFoundError, ValueError) as e:
                     print(f"[{concept}] SKIPPED: {e}")
