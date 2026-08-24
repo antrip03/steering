@@ -30,7 +30,7 @@ pandas
 numpy==1.26.4
 tqdm
 openai
-google-generativeai
+google-genai
 huggingface_hub==0.32.3
 
 # Added for this project (not required by PISCES itself)
