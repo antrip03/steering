@@ -34,7 +34,7 @@ ARTIFACTS_DIR = ROOT / "artifacts"
 EVAL_RESULTS_DIR = ARTIFACTS_DIR / "erasure_eval"
 COMBINED_RESULTS_PATH = ARTIFACTS_DIR / "results.parquet"
 
-ENTANGLEMENT_COLS = ["entanglement_cosine", "entanglement_pullin_rate", "entanglement_token_overlap"]
+ENTANGLEMENT_COLS = ["entanglement_cosine", "entanglement_cosine_paired", "entanglement_pullin_rate", "entanglement_token_overlap"]
 OUTCOME_COLS = ["efficacy", "specificity_simdomain", "specificity_mmlu"]
 
 

@@ -149,7 +149,8 @@ class ConceptResultRow:
     specificity_mmlu: float | None = None  # MMLU accuracy
 
     # Entanglement metrics (Track B), measured in dictionary (SAE feature) space
-    entanglement_cosine: float | None = None  # metric (a): cross-concept cosine similarity
+    entanglement_cosine: float | None = None  # metric (a): cross-concept cosine similarity, averaged over all other concepts
+    entanglement_cosine_paired: float | None = None  # metric (a), pairwise: cosine similarity against this concept's specific NEAR_DOMAIN_PAIRS partner only
     entanglement_pullin_rate: float | None = None  # metric (b): filter pull-in rate
     entanglement_token_overlap: float | None = None  # metric (c): activating-token Jaccard overlap
 

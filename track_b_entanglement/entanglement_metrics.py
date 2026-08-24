@@ -80,6 +80,25 @@ def cosine_entanglement(concept_a: str, concept_b: str) -> float:
     return float(sims.mean())
 
 
+def cosine_entanglement_paired(concept: str) -> float:
+    """Pairwise version of metric (a): cosine similarity against this
+    concept's specific NEAR_DOMAIN_PAIRS partner only, not averaged over
+    every other concept in the dataset (that's what entanglement_cosine /
+    compute_all() below does). This is the more literal reading of the
+    project's central hypothesis -- "entangled with OTHER concepts'
+    representations" as a specific pairwise relationship, not an average
+    over the whole concept set. Returns NaN if the concept has no
+    NEAR_DOMAIN_PAIRS entry, or if either side's Track A output is missing
+    (same fallback behavior as token_overlap() below)."""
+    near_domain = NEAR_DOMAIN_PAIRS.get(concept)
+    if near_domain is None:
+        return float("nan")
+    try:
+        return cosine_entanglement(concept, near_domain)
+    except FileNotFoundError:
+        return float("nan")
+
+
 def pullin_rate(concept: str) -> float:
     """Metric (b): fraction of candidate features that passed the automatic
     vocabulary-projection threshold (i.e. were returned by search_features)
@@ -152,10 +171,11 @@ def compute_all(concepts: list[str] | None = None) -> pd.DataFrame:
         row = ConceptResultRow(
             concept=concept,
             entanglement_cosine=cosine_mean,
+            entanglement_cosine_paired=cosine_entanglement_paired(concept),
             entanglement_pullin_rate=pullin_rate(concept),
             entanglement_token_overlap=token_overlap(concept),
         ).to_dict()
-        rows.append({k: row[k] for k in ("concept", "entanglement_cosine", "entanglement_pullin_rate", "entanglement_token_overlap")})
+        rows.append({k: row[k] for k in ("concept", "entanglement_cosine", "entanglement_cosine_paired", "entanglement_pullin_rate", "entanglement_token_overlap")})
 
     return pd.DataFrame(rows)
 

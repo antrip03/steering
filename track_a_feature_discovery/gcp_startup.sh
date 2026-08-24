@@ -47,6 +47,17 @@ on_exit() {
   local exit_code=$?
   log "=== Script exiting with code $exit_code ==="
   kill "$LOG_UPLOADER_PID" 2>/dev/null || true
+  # Copy any computed features straight to GCS, independent of --push-to-hub
+  # (dropped below -- antrip03's HF token still lacks write access to
+  # steeringantrip03/pisces-track-a-runs, same gap that made Track C crash
+  # after a concept's real work was already done; hub_storage.push_run_output
+  # raises on failure rather than swallowing it). discover.py writes the
+  # local parquet before any push would happen, so the result survives here
+  # even on a push failure.
+  if compgen -G "/opt/pisces/artifacts/features/*.parquet" > /dev/null; then
+    gcloud storage cp /opt/pisces/artifacts/features/*.parquet "gs://${GCS_BUCKET}/results/" || \
+      log "WARNING: results copy to GCS failed"
+  fi
   gcloud storage cp /var/log/pisces-run.log "gs://${GCS_BUCKET}/logs/${INSTANCE_NAME}.log" || \
     log "WARNING: final log upload failed -- log only survives via serial port output while the VM is still running"
   log "Shutting down to stop billing (disk persists until manually deleted)."
@@ -87,7 +98,7 @@ echo -n "$HF_TOKEN" > ~/.cache/huggingface/token
 log "Starting discover.py..."
 cd /opt/pisces/track_a_feature_discovery
 python discover.py --device cuda --concept "$CONCEPT" --layers $LAYERS \
-  --reduced --debug-log-noop-edits --push-to-hub
+  --reduced --debug-log-noop-edits
 
 log "=== discover.py finished successfully ==="
 # on_exit (registered via trap above) handles the final log upload and
