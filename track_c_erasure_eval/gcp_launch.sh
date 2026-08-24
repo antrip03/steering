@@ -19,6 +19,13 @@
 #                                      # edited simultaneously, vs the
 #                                      # notebook's own validated 5-feature
 #                                      # Harry Potter example)
+#   ./gcp_launch.sh "Golf,Uranium" 0.8 13 10 "5,10,20"   # 5th arg: optional
+#                                      # --screen-features candidates -- cheaply
+#                                      # screens each with MMLU-only per concept
+#                                      # and overrides the 4th arg (max-features)
+#                                      # with whichever candidate scored best.
+#                                      # See run_erasure_eval.py's
+#                                      # screen_max_features().
 #
 # Concepts are comma-separated (not space-separated) so multi-word concept
 # names survive intact through instance metadata and the startup script's
@@ -35,10 +42,11 @@
 # service account (granted roles/aiplatform.user) -- no API key needed.
 set -euo pipefail
 
-CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\" [k] [value] [max-features]}"
+CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\" [k] [value] [max-features] [screen-features]}"
 K="${2:-0.4}"
 VALUE="${3:-36}"
 MAX_FEATURES="${4:-0}"  # 0 means unset/unlimited -- see gcp_startup.sh
+SCREEN_FEATURES="${5:-}"  # e.g. "5,10,20" -- empty means no screening, use MAX_FEATURES directly
 
 PROJECT="steering-505317"
 ZONES=(us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b us-west1-c us-east1-b us-east1-c us-east1-d us-east4-a)
@@ -54,9 +62,13 @@ echo "Launching $INSTANCE_NAME for concepts='$CONCEPTS'..."
 # than one concept is passed -- never triggered before tonight since every
 # prior launch was single-concept. --metadata-from-file reads the raw file
 # content as one opaque value, sidestepping the comma-splitting entirely.
+# SCREEN_FEATURES ("5,10,20") has the exact same problem, so it goes through
+# the same mechanism.
 CONCEPTS_FILE="$(mktemp)"
 printf '%s' "$CONCEPTS" > "$CONCEPTS_FILE"
-trap 'rm -f "$CONCEPTS_FILE"' EXIT
+SCREEN_FEATURES_FILE="$(mktemp)"
+printf '%s' "$SCREEN_FEATURES" > "$SCREEN_FEATURES_FILE"
+trap 'rm -f "$CONCEPTS_FILE" "$SCREEN_FEATURES_FILE"' EXIT
 
 CREATED=0
 for ZONE in "${ZONES[@]}"; do
@@ -70,7 +82,7 @@ for ZONE in "${ZONES[@]}"; do
     --boot-disk-size=100GB \
     --boot-disk-type=pd-balanced \
     --maintenance-policy=TERMINATE \
-    --metadata-from-file=startup-script=gcp_startup.sh,concepts="$CONCEPTS_FILE" \
+    --metadata-from-file=startup-script=gcp_startup.sh,concepts="$CONCEPTS_FILE",screen-features="$SCREEN_FEATURES_FILE" \
     --metadata=gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",k="$K",value="$VALUE",max-features="$MAX_FEATURES" \
     --scopes=https://www.googleapis.com/auth/cloud-platform 2>&1 | tee /tmp/gcp_create_attempt_c.log; then
     CREATED=1

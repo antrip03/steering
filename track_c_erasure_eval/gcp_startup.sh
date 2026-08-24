@@ -20,6 +20,7 @@ GCS_BUCKET="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.inter
 K="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/k')"
 VALUE="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/value')"
 MAX_FEATURES="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/max-features')"
+SCREEN_FEATURES="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/attributes/screen-features')"
 INSTANCE_NAME="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/name')"
 
 log "=== Track C erasure eval starting: concepts=$CONCEPTS instance=$INSTANCE_NAME ==="
@@ -95,6 +96,10 @@ MAX_FEATURES_ARGS=()
 if [ "$MAX_FEATURES" != "0" ] && [ -n "$MAX_FEATURES" ]; then
   MAX_FEATURES_ARGS=(--max-features "$MAX_FEATURES")
 fi
-python run_erasure_eval.py --device cuda "${CONCEPT_ARGS[@]}" --k "$K" --value "$VALUE" "${MAX_FEATURES_ARGS[@]}"
+SCREEN_FEATURES_ARGS=()
+if [ -n "$SCREEN_FEATURES" ]; then
+  SCREEN_FEATURES_ARGS=(--screen-features "$SCREEN_FEATURES")
+fi
+python run_erasure_eval.py --device cuda "${CONCEPT_ARGS[@]}" --k "$K" --value "$VALUE" "${MAX_FEATURES_ARGS[@]}" "${SCREEN_FEATURES_ARGS[@]}"
 
 log "=== run_erasure_eval.py finished successfully ==="
