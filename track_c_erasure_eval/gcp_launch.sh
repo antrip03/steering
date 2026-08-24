@@ -63,10 +63,17 @@ echo "Launching $INSTANCE_NAME for concepts='$CONCEPTS'..."
 # prior launch was single-concept. --metadata-from-file reads the raw file
 # content as one opaque value, sidestepping the comma-splitting entirely.
 # SCREEN_FEATURES ("5,10,20") has the exact same problem, so it goes through
-# the same mechanism.
-CONCEPTS_FILE="$(mktemp)"
+# the same mechanism. Plain files under .scratch_tmp/, not mktemp's /tmp --
+# gcloud (a native Windows binary under Git Bash, not an MSYS one) failed to
+# read a real mktemp-created file ("Unable to read file [/tmp/tmp.XXX]")
+# once TWO such paths appeared inside the same compound
+# --metadata-from-file value, an MSYS path-translation quirk that a plain
+# project-relative path sidesteps (already proven reliable all session for
+# the tarball).
+mkdir -p "$(dirname "$0")/../.scratch_tmp"
+CONCEPTS_FILE="$(dirname "$0")/../.scratch_tmp/concepts_$$.txt"
 printf '%s' "$CONCEPTS" > "$CONCEPTS_FILE"
-SCREEN_FEATURES_FILE="$(mktemp)"
+SCREEN_FEATURES_FILE="$(dirname "$0")/../.scratch_tmp/screen_features_$$.txt"
 printf '%s' "$SCREEN_FEATURES" > "$SCREEN_FEATURES_FILE"
 trap 'rm -f "$CONCEPTS_FILE" "$SCREEN_FEATURES_FILE"' EXIT
 
