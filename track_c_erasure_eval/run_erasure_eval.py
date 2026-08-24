@@ -126,7 +126,11 @@ def evaluate_concept(
     with unlearn_concept(model, concept, linscale=True, signs=signs):
         efficacy_res = evaluate_open_ended(wrapped, evaluator, qa_test, verbose=False)
         simdom_res = evaluate_open_ended(wrapped, evaluator, simdom_test, verbose=False)
-        mmlu_res, _ = evaluate_mmlu(model, True, limit=mmlu_limit, evaluation_type=MCQAEvaluations.RANK_BASED, verbose=False)
+        # batch_size=10 (evaluate_mmlu's default) was observed hitting a genuine
+        # (not just fragmentation) CUDA OOM on the L4's 24GB -- "4.69 GiB
+        # needed, 1.27 GiB free", not close. A smaller batch lowers the peak
+        # memory of each batched forward pass at some cost to eval speed.
+        mmlu_res, _ = evaluate_mmlu(model, True, limit=mmlu_limit, batch_size=4, evaluation_type=MCQAEvaluations.RANK_BASED, verbose=False)
 
     # TEMPORARY diagnostic -- dumps a few raw model answers + Gemini's raw
     # grading response, to tell apart "model output is genuinely garbage
