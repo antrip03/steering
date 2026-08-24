@@ -48,6 +48,16 @@ HF_TOKEN_VALUE="$(cat ~/.cache/huggingface/token)"
 
 echo "Launching $INSTANCE_NAME for concepts='$CONCEPTS'..."
 
+# gcloud's --metadata flag itself uses commas to separate different key=value
+# pairs, so a multi-concept CONCEPTS value ("Golf,Uranium,...") gets
+# misparsed as more keys ("Bad syntax for dict arg: [Uranium]") once more
+# than one concept is passed -- never triggered before tonight since every
+# prior launch was single-concept. --metadata-from-file reads the raw file
+# content as one opaque value, sidestepping the comma-splitting entirely.
+CONCEPTS_FILE="$(mktemp)"
+printf '%s' "$CONCEPTS" > "$CONCEPTS_FILE"
+trap 'rm -f "$CONCEPTS_FILE"' EXIT
+
 CREATED=0
 for ZONE in "${ZONES[@]}"; do
   echo "Trying zone $ZONE..."
@@ -60,8 +70,8 @@ for ZONE in "${ZONES[@]}"; do
     --boot-disk-size=100GB \
     --boot-disk-type=pd-balanced \
     --maintenance-policy=TERMINATE \
-    --metadata-from-file=startup-script=gcp_startup.sh \
-    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",k="$K",value="$VALUE",max-features="$MAX_FEATURES" \
+    --metadata-from-file=startup-script=gcp_startup.sh,concepts="$CONCEPTS_FILE" \
+    --metadata=gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",k="$K",value="$VALUE",max-features="$MAX_FEATURES" \
     --scopes=https://www.googleapis.com/auth/cloud-platform 2>&1 | tee /tmp/gcp_create_attempt_c.log; then
     CREATED=1
     break
