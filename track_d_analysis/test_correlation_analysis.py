@@ -23,9 +23,9 @@ from fixtures import FAKE_CONCEPTS, write_fake_eval_results, write_fake_features
 
 def test_build_combined_results_preserves_real_entanglement_values(tmp_path, monkeypatch):
     features_dir = tmp_path / "features"
-    eval_results_path = tmp_path / "erasure_eval_results.parquet"
+    eval_results_dir = tmp_path / "erasure_eval"
     write_fake_features_dir(features_dir)
-    write_fake_eval_results(eval_results_path)
+    write_fake_eval_results(eval_results_dir)
 
     monkeypatch.setattr(em, "FEATURES_DIR", features_dir)
     # build_combined_results() calls compute_entanglement() with no args, which
@@ -42,7 +42,7 @@ def test_build_combined_results_preserves_real_entanglement_values(tmp_path, mon
             FAKE_CONCEPTS[2]: FAKE_CONCEPTS[0],
         },
     )
-    monkeypatch.setattr(ca, "EVAL_RESULTS_PATH", eval_results_path)
+    monkeypatch.setattr(ca, "EVAL_RESULTS_DIR", eval_results_dir)
 
     combined = ca.build_combined_results()
 
@@ -66,9 +66,9 @@ def test_build_combined_results_preserves_real_entanglement_values(tmp_path, mon
 
 def test_compute_correlations_produces_non_trivial_rho(tmp_path, monkeypatch):
     features_dir = tmp_path / "features"
-    eval_results_path = tmp_path / "erasure_eval_results.parquet"
+    eval_results_dir = tmp_path / "erasure_eval"
     write_fake_features_dir(features_dir)
-    write_fake_eval_results(eval_results_path)
+    write_fake_eval_results(eval_results_dir)
 
     monkeypatch.setattr(em, "FEATURES_DIR", features_dir)
     # build_combined_results() calls compute_entanglement() with no args, which
@@ -85,7 +85,7 @@ def test_compute_correlations_produces_non_trivial_rho(tmp_path, monkeypatch):
             FAKE_CONCEPTS[2]: FAKE_CONCEPTS[0],
         },
     )
-    monkeypatch.setattr(ca, "EVAL_RESULTS_PATH", eval_results_path)
+    monkeypatch.setattr(ca, "EVAL_RESULTS_DIR", eval_results_dir)
 
     combined = ca.build_combined_results()
     correlations = ca.compute_correlations(combined)

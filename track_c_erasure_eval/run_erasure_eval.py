@@ -25,7 +25,7 @@ for p in (ROOT, PISCES_REF):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from schema import CVS_PATH, ConceptResultRow, MODEL_NAME, NATURAL_CONCEPTS, feature_artifact_filename  # noqa: E402
+from schema import CVS_PATH, ConceptResultRow, MODEL_NAME, NATURAL_CONCEPTS, erasure_result_filename, feature_artifact_filename  # noqa: E402
 from editor import Concept, Feature, get_mlp_act_signs, unlearn_concept  # noqa: E402
 from evals import (  # noqa: E402
     GeminiEvaluator,
@@ -131,6 +131,12 @@ def main():
     )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--mmlu-limit", type=int, default=300)
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Upload each concept's result parquet to hub_storage.HF_REPO_ID after writing it "
+             "locally, same mechanism Track A uses. Requires an HF token with repo.write scope.",
+    )
     args = parser.parse_args()
 
     from sae_lens import HookedSAETransformer
@@ -163,11 +169,29 @@ def main():
     # few hundred passes during the Track A discovery run.
     model.requires_grad_(False)
 
-    rows = []
+    out_dir = ROOT / "artifacts" / "erasure_eval"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_and_maybe_push(row: ConceptResultRow) -> None:
+        # Written and pushed immediately after each concept, not batched
+        # until the whole run finishes -- a crash on concept 5 of 10 (Gemini
+        # API hiccup, GPU issue, anything) must not lose concepts 1-4's
+        # already-computed results, and separate invocations (different
+        # concepts on different machines) must not clobber each other's
+        # output the way a single shared erasure_eval_results.parquet would.
+        out_path = out_dir / erasure_result_filename(row.concept)
+        pd.DataFrame([row.to_dict()]).to_parquet(out_path, index=False)
+        print(f"[{row.concept}] wrote {out_path}")
+        if args.push_to_hub:
+            from hub_storage import push_run_output
+            url = push_run_output(out_path)
+            print(f"[{row.concept}] pushed to {url}")
+
     with torch.no_grad():
         if args.hardcoded_hp:
             pos_toks = load_pos_toks("Harry Potter")
-            rows.append(evaluate_concept(model, "Harry Potter", HARDCODED_HP_FEATURES, pos_toks, mmlu_limit=args.mmlu_limit))
+            row = evaluate_concept(model, "Harry Potter", HARDCODED_HP_FEATURES, pos_toks, mmlu_limit=args.mmlu_limit)
+            write_and_maybe_push(row)
         else:
             concepts = args.concepts or NATURAL_CONCEPTS
             for concept in concepts:
@@ -177,13 +201,8 @@ def main():
                 except (FileNotFoundError, ValueError) as e:
                     print(f"[{concept}] SKIPPED: {e}")
                     continue
-                rows.append(evaluate_concept(model, concept, features, pos_toks, mmlu_limit=args.mmlu_limit))
-
-    out_dir = ROOT / "artifacts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "erasure_eval_results.parquet"
-    pd.DataFrame([r.to_dict() for r in rows]).to_parquet(out_path, index=False)
-    print(f"Wrote {len(rows)} rows to {out_path}")
+                row = evaluate_concept(model, concept, features, pos_toks, mmlu_limit=args.mmlu_limit)
+                write_and_maybe_push(row)
 
 
 if __name__ == "__main__":

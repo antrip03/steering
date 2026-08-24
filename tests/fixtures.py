@@ -101,15 +101,21 @@ def write_fake_features_dir(dir_path: Path) -> None:
         df.to_parquet(out, index=False)
 
 
-def write_fake_eval_results(path: Path) -> None:
-    """Writes a single erasure_eval_results.parquet-shaped file covering all
-    FAKE_CONCEPTS, in the same shape Track C's run_erasure_eval.py writes."""
+def write_fake_eval_results(dir_path: Path) -> None:
+    """Writes one erasure_eval__<concept>.parquet per FAKE_CONCEPTS into
+    dir_path, in the same shape/one-file-per-concept convention Track C's
+    run_erasure_eval.py uses (schema.erasure_result_filename) -- not a
+    single shared erasure_eval_results.parquet, which risked one crashed
+    concept clobbering already-computed results for the others."""
     import pandas as pd
+    from schema import erasure_result_filename
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    dir_path.mkdir(parents=True, exist_ok=True)
     rows = [
         make_concept_result_row(FAKE_CONCEPTS[0], efficacy=0.05, sim=0.82, mmlu=0.60),
         make_concept_result_row(FAKE_CONCEPTS[1], efficacy=0.12, sim=0.75, mmlu=0.58),
         make_concept_result_row(FAKE_CONCEPTS[2], efficacy=0.03, sim=0.90, mmlu=0.61),
     ]
-    pd.DataFrame(rows).to_parquet(path, index=False)
+    for row in rows:
+        out = dir_path / erasure_result_filename(row["concept"])
+        pd.DataFrame([row]).to_parquet(out, index=False)

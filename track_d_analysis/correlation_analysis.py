@@ -23,7 +23,15 @@ from schema import CONCEPT_RESULT_FIELDS  # noqa: E402
 from entanglement_metrics import compute_all as compute_entanglement  # noqa: E402
 
 ARTIFACTS_DIR = ROOT / "artifacts"
-EVAL_RESULTS_PATH = ARTIFACTS_DIR / "erasure_eval_results.parquet"
+# Track C (run_erasure_eval.py) writes one erasure_eval__<concept>.parquet
+# per concept into this directory, not one shared erasure_eval_results.parquet
+# -- a crashed concept, or concepts run as separate invocations/machines,
+# would otherwise clobber already-computed results the same way Track A's
+# pre-build_run_tag() output collisions did. Kept separate from
+# artifacts/features/ (Track A's own per-concept output directory) even
+# though both are now "one file per concept" -- mixing two tracks' artifacts
+# in one directory invites an accidental glob("*.parquet") picking up both.
+EVAL_RESULTS_DIR = ARTIFACTS_DIR / "erasure_eval"
 COMBINED_RESULTS_PATH = ARTIFACTS_DIR / "results.parquet"
 
 ENTANGLEMENT_COLS = ["entanglement_cosine", "entanglement_pullin_rate", "entanglement_token_overlap"]
@@ -33,11 +41,13 @@ OUTCOME_COLS = ["efficacy", "specificity_simdomain", "specificity_mmlu"]
 def build_combined_results() -> pd.DataFrame:
     entanglement_df = compute_entanglement()
 
-    if not EVAL_RESULTS_PATH.exists():
+    eval_paths = sorted(EVAL_RESULTS_DIR.glob("erasure_eval__*.parquet"))
+    if not eval_paths:
         raise FileNotFoundError(
-            f"No Track C output at {EVAL_RESULTS_PATH}. Run track_c_erasure_eval/run_erasure_eval.py first."
+            f"No Track C output (erasure_eval__*.parquet) in {EVAL_RESULTS_DIR}. "
+            "Run track_c_erasure_eval/run_erasure_eval.py first."
         )
-    eval_df = pd.read_parquet(EVAL_RESULTS_PATH)
+    eval_df = pd.concat([pd.read_parquet(p) for p in eval_paths], ignore_index=True)
 
     # Track B is the sole source of truth for the entanglement_* columns -- Track C's
     # ConceptResultRow rows always carry them as the schema default (None), via

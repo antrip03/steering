@@ -80,6 +80,16 @@ def feature_artifact_filename(concept: str) -> str:
     return f"{concept.lower().replace(' ', '_')}__{CANONICAL_FEATURE_RUN_TAG}.parquet"
 
 
+def erasure_result_filename(concept: str) -> str:
+    """Track C (run_erasure_eval.py) writes one file per concept, not one
+    shared erasure_eval_results.parquet for every concept processed in a
+    single invocation -- the same collision/data-loss risk Track A's
+    build_run_tag() was added to fix (one crashed concept, or running
+    concepts in separate processes/machines, would otherwise clobber
+    already-computed results for other concepts)."""
+    return f"erasure_eval__{concept.lower().replace(' ', '_')}.parquet"
+
+
 @dataclass
 class FeatureRecord:
     """One row of a per-concept feature-candidate parquet
