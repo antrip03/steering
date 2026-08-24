@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -43,6 +44,24 @@ from evals import (  # noqa: E402
 FEATURES_DIR = ROOT / "artifacts" / "features"
 TOKENS_PATH = ROOT / "track_a_feature_discovery" / "concept_tokens.json"
 
+# evaluate_mmlu's own random.sample() has no fixed seed, so every call --
+# across different concepts, different hyperparameter candidates, even
+# repeated calls at identical settings -- draws a different random 300
+# (or --mmlu-screen-limit) question subset. Observed directly: Golf's
+# specificity_mmlu moved 0.307 -> 0.363 -> 0.263 across three otherwise
+# identical re-runs, noise large enough to swamp real hyperparameter
+# effects. Reseeding immediately before every evaluate_mmlu call (both the
+# cheap screening passes and the final scored one) makes every call within
+# each limit size draw the SAME question subset, so differences between
+# concepts/candidates reflect the edit, not the sample.
+MMLU_SEED = 42
+
+
+def evaluate_mmlu_fixed(model, limit: int, batch_size: int = 4):
+    random.seed(MMLU_SEED)
+    return evaluate_mmlu(model, True, limit=limit, batch_size=batch_size, evaluation_type=MCQAEvaluations.RANK_BASED, verbose=False)
+
+
 # The five features hand-picked by PISCES's authors for Harry Potter, hardcoded
 # in pisces_ref/erasing_harry_potter.ipynb -- used to validate this track
 # end-to-end before Track A produces real selected-feature sets.
@@ -64,7 +83,7 @@ def load_concept_data(concept: str) -> dict:
     raise KeyError(f"Concept {concept!r} not found in {CVS_PATH}")
 
 
-def load_selected_features(concept: str, max_features: int | None = None) -> list[Feature]:
+def load_selected_features_df(concept: str) -> pd.DataFrame:
     path = FEATURES_DIR / feature_artifact_filename(concept)
     if not path.exists():
         raise FileNotFoundError(
@@ -73,19 +92,29 @@ def load_selected_features(concept: str, max_features: int | None = None) -> lis
             "--hardcoded-hp for the Harry Potter validation path."
         )
     df = pd.read_parquet(path)
-    selected = df[df["selected"]]
+    return df[df["selected"]]
+
+
+def truncate_features(selected: pd.DataFrame, max_features: int | None) -> list[Feature]:
+    """Keep only the top max_features rows by |mass_ratio_or_effect_score|
+    (all of them if max_features is None or already <= the count).
+
+    Track A's selection filters are far more permissive than PISCES's own
+    validated example (5 hand-picked Harry Potter features) -- observed
+    selecting 46-435 features per concept across all 10 completed concepts,
+    and editing that many features simultaneously produced degenerate,
+    repetition-collapsed generation (confirmed by inspecting real model
+    output, not just the aggregate metrics) even at conservative k/value
+    settings. Capping to the top-N by effect magnitude keeps the edit closer
+    to the validated reference scale without discarding Track A's
+    already-completed selection work."""
     if max_features is not None and len(selected) > max_features:
-        # Track A's selection filters are far more permissive than PISCES's
-        # own validated example (5 hand-picked Harry Potter features) --
-        # observed selecting 46-435 features per concept across all 10
-        # completed concepts, and editing that many features simultaneously
-        # produced degenerate, repetition-collapsed generation (confirmed by
-        # inspecting real model output, not just the aggregate metrics) even
-        # at conservative k/value settings. Capping to the top-N by effect
-        # magnitude keeps the edit closer to the validated reference scale
-        # without discarding Track A's already-completed selection work.
         selected = selected.reindex(selected["mass_ratio_or_effect_score"].abs().sort_values(ascending=False).index).head(max_features)
     return [Feature(layer=int(r.layer), id=int(r.feature_id), neg=bool(r.neg)) for r in selected.itertuples()]
+
+
+def load_selected_features(concept: str, max_features: int | None = None) -> list[Feature]:
+    return truncate_features(load_selected_features_df(concept), max_features)
 
 
 def load_pos_toks(concept: str) -> list[str]:
@@ -130,7 +159,7 @@ def evaluate_concept(
         # (not just fragmentation) CUDA OOM on the L4's 24GB -- "4.69 GiB
         # needed, 1.27 GiB free", not close. A smaller batch lowers the peak
         # memory of each batched forward pass at some cost to eval speed.
-        mmlu_res, _ = evaluate_mmlu(model, True, limit=mmlu_limit, batch_size=4, evaluation_type=MCQAEvaluations.RANK_BASED, verbose=False)
+        mmlu_res, _ = evaluate_mmlu_fixed(model, limit=mmlu_limit)
 
     return ConceptResultRow(
         concept=concept_name,
@@ -138,6 +167,44 @@ def evaluate_concept(
         specificity_simdomain=simdom_res.score_from_total,
         specificity_mmlu=mmlu_res.score_from_total,
     )
+
+
+def screen_max_features(
+    model,
+    concept_name: str,
+    selected_df: pd.DataFrame,
+    pos_toks: list[str],
+    candidates: list[int],
+    k: float,
+    value: float,
+    mmlu_screen_limit: int = 60,
+) -> int:
+    """Cheap per-concept hyperparameter screen: tries each candidate
+    max_features value, scoring only with MMLU (no Gemini calls needed, so
+    this is fast) at a smaller question count than the final scored eval,
+    and returns whichever candidate kept specificity_mmlu healthiest.
+
+    Not PISCES's own find_hps (a 10x10 grid that also re-runs the expensive
+    feature-filtering step per combination) -- that's too costly to run per
+    concept under deadline pressure. This only screens max_features (the
+    axis a manual sweep on Golf showed was most sensitive) at a fixed,
+    already-reasonable (k, value), using a cheap proxy metric instead of the
+    full efficacy+specificity_simdomain+specificity_mmlu eval."""
+    concept_data = load_concept_data(concept_name)
+    signs = get_mlp_act_signs(model, pos_toks, concept_data["wikipedia_content"].splitlines()[:1000])
+
+    print(f"[{concept_name}] Screening max_features candidates {candidates} (MMLU-only, limit={mmlu_screen_limit})...", flush=True)
+    best_mf, best_score = candidates[0], -1.0
+    for mf in candidates:
+        features = truncate_features(selected_df, mf)
+        concept = Concept(name=concept_name, k=k, value=value, features=features)
+        with unlearn_concept(model, concept, linscale=True, signs=signs):
+            mmlu_res = evaluate_mmlu_fixed(model, limit=mmlu_screen_limit)[0]
+        print(f"[{concept_name}]   max_features={mf}: mmlu_screen={mmlu_res.score_from_total:.3f}", flush=True)
+        if mmlu_res.score_from_total > best_score:
+            best_mf, best_score = mf, mmlu_res.score_from_total
+    print(f"[{concept_name}] Selected max_features={best_mf} (mmlu_screen={best_score:.3f})", flush=True)
+    return best_mf
 
 
 def main():
@@ -167,6 +234,18 @@ def main():
              "-- observed selecting 46-435 features per concept, which produced "
              "repetition-collapsed, incoherent generation even at conservative k/value. "
              "Unset (None) uses all selected features, the prior behavior.",
+    )
+    parser.add_argument(
+        "--screen-features", default=None,
+        help="Comma-separated max_features candidates (e.g. '5,10,20') to screen per concept "
+             "with a cheap MMLU-only pass (see screen_max_features()) before running the full "
+             "Gemini-based eval with whichever candidate scored best. Overrides --max-features "
+             "per concept when set.",
+    )
+    parser.add_argument(
+        "--mmlu-screen-limit", type=int, default=60,
+        help="MMLU question count for --screen-features's cheap screening pass (smaller than "
+             "--mmlu-limit since it only needs to rank candidates, not produce a final score).",
     )
     parser.add_argument(
         "--push-to-hub",
@@ -231,13 +310,23 @@ def main():
             write_and_maybe_push(row)
         else:
             concepts = args.concepts or NATURAL_CONCEPTS
+            screen_candidates = [int(x) for x in args.screen_features.split(",")] if args.screen_features else None
             for concept in concepts:
                 try:
-                    features = load_selected_features(concept, max_features=args.max_features)
+                    selected_df = load_selected_features_df(concept)
                     pos_toks = load_pos_toks(concept)
                 except (FileNotFoundError, ValueError) as e:
                     print(f"[{concept}] SKIPPED: {e}")
                     continue
+
+                max_features = args.max_features
+                if screen_candidates:
+                    max_features = screen_max_features(
+                        model, concept, selected_df, pos_toks, screen_candidates,
+                        k=args.k, value=args.value, mmlu_screen_limit=args.mmlu_screen_limit,
+                    )
+                features = truncate_features(selected_df, max_features)
+
                 row = evaluate_concept(model, concept, features, pos_toks, k=args.k, value=args.value, mmlu_limit=args.mmlu_limit)
                 write_and_maybe_push(row)
 
