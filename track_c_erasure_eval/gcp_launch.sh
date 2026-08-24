@@ -19,16 +19,11 @@
 #     to read). Re-run the tar/upload step below if either the code or the
 #     set of completed Track A concepts has changed since.
 #
-# Requires GEMINI_API_KEY set in this shell's environment (same variable
-# run_erasure_eval.py itself reads locally).
+# Gemini calls go through Vertex AI, authenticated via the VM's own default
+# service account (granted roles/aiplatform.user) -- no API key needed.
 set -euo pipefail
 
 CONCEPTS="${1:?Usage: ./gcp_launch.sh \"Concept One,Concept Two,...\"}"
-
-if [ -z "${GEMINI_API_KEY:-}" ]; then
-  echo "GEMINI_API_KEY is not set in this shell. Export it first." >&2
-  exit 1
-fi
 
 PROJECT="steering-505317"
 ZONES=(us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b us-west1-c us-east1-b us-east1-c us-east1-d us-east4-a)
@@ -51,8 +46,8 @@ for ZONE in "${ZONES[@]}"; do
     --boot-disk-type=pd-balanced \
     --maintenance-policy=TERMINATE \
     --metadata-from-file=startup-script=gcp_startup.sh \
-    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE",gemini-key="$GEMINI_API_KEY" \
-    --scopes=storage-full 2>&1 | tee /tmp/gcp_create_attempt_c.log; then
+    --metadata=concepts="$CONCEPTS",gcs-bucket="$BUCKET",hf-token="$HF_TOKEN_VALUE" \
+    --scopes=https://www.googleapis.com/auth/cloud-platform 2>&1 | tee /tmp/gcp_create_attempt_c.log; then
     CREATED=1
     break
   fi
