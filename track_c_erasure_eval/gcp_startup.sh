@@ -77,6 +77,14 @@ echo -n "$HF_TOKEN" > ~/.cache/huggingface/token
 
 log "Starting run_erasure_eval.py..."
 cd /opt/pisces/track_c_erasure_eval
+# MMLU eval (evaluate_mcqa) runs right at the GPU's memory ceiling on a
+# g2-standard-8's 24GB L4 -- even a run that completed cleanly showed several
+# recoverable "memory allocation failed with OOM" warnings at this same step,
+# and one otherwise-identical run crashed outright with a fatal
+# torch.OutOfMemoryError there ("2.49 GiB is free" but a 2.80 GiB allocation
+# still failed -- a fragmentation symptom, not a true out-of-memory one).
+# expandable_segments is PyTorch's own suggested fix for exactly this pattern.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 CONCEPT_ARGS=()
 IFS=',' read -ra CONCEPT_LIST <<< "$CONCEPTS"
 for c in "${CONCEPT_LIST[@]}"; do
