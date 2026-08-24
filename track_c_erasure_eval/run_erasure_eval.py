@@ -124,10 +124,10 @@ def evaluate_concept(
     # result is understood.
     print(f"=== DEBUG: {concept_name} sample efficacy answers ===", flush=True)
     for (q, a), r in list(zip(efficacy_res.qas, efficacy_res.responses))[:3]:
-        print(f"  Q: {q.question!r}\n  MODEL ANSWER: {a!r}\n  GEMINI GRADING RESPONSE: {r!r}\n", flush=True)
+        print(f"  Q: {q!r}\n  MODEL ANSWER: {a!r}\n  GEMINI GRADING RESPONSE: {r!r}\n", flush=True)
     print(f"=== DEBUG: {concept_name} sample specificity_simdomain answers ===", flush=True)
     for (q, a), r in list(zip(simdom_res.qas, simdom_res.responses))[:3]:
-        print(f"  Q: {q.question!r}\n  MODEL ANSWER: {a!r}\n  GEMINI GRADING RESPONSE: {r!r}\n", flush=True)
+        print(f"  Q: {q!r}\n  MODEL ANSWER: {a!r}\n  GEMINI GRADING RESPONSE: {r!r}\n", flush=True)
 
     return ConceptResultRow(
         concept=concept_name,
