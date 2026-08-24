@@ -117,6 +117,18 @@ def evaluate_concept(
         simdom_res = evaluate_open_ended(wrapped, evaluator, simdom_test, verbose=False)
         mmlu_res, _ = evaluate_mmlu(model, True, limit=mmlu_limit, evaluation_type=MCQAEvaluations.RANK_BASED, verbose=False)
 
+    # TEMPORARY diagnostic -- dumps a few raw model answers + Gemini's raw
+    # grading response, to tell apart "model output is genuinely garbage
+    # after editing" from "output is fine but something in the grading path
+    # scores it wrong". Remove once Golf's near-chance-MMLU/zero-specificity
+    # result is understood.
+    print(f"=== DEBUG: {concept_name} sample efficacy answers ===", flush=True)
+    for (q, a), r in list(zip(efficacy_res.qas, efficacy_res.responses))[:3]:
+        print(f"  Q: {q.question!r}\n  MODEL ANSWER: {a!r}\n  GEMINI GRADING RESPONSE: {r!r}\n", flush=True)
+    print(f"=== DEBUG: {concept_name} sample specificity_simdomain answers ===", flush=True)
+    for (q, a), r in list(zip(simdom_res.qas, simdom_res.responses))[:3]:
+        print(f"  Q: {q.question!r}\n  MODEL ANSWER: {a!r}\n  GEMINI GRADING RESPONSE: {r!r}\n", flush=True)
+
     return ConceptResultRow(
         concept=concept_name,
         efficacy=efficacy_res.score_from_total,
